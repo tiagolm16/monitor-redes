@@ -117,3 +117,167 @@ Interfaces: monitor em http://localhost:8000, Swagger em `/docs`, Mailpit em htt
 5. **Fim de linha no Windows**: o Git pode converter para CRLF e quebrar `nginx.conf`, `Corefile` ou `htpasswd` dentro dos containers Linux. Solução: `.gitattributes` com `eol=lf`.
 6. **Slow queries por média**: a contagem usa a média do `pg_stat_statements` (200 ms ou mais). Se a média de uma query cair depois, a soma pode diminuir e o valor é tratado como 0 naquele ciclo. É uma aproximação aceitável para o laboratório. O log `log_min_duration_statement` registra cada query lenta individualmente (`docker logs rd-postgres`).
 7. **`nslookup` do Windows não respondeu na porta 1053**: o `nslookup` do Windows costuma falhar com porta customizada (ele tenta antes um DNS reverso do servidor). Um teste direto em Python por UDP e TCP para `127.0.0.1:1053` confirmou que o CoreDNS responde. Para demonstrar, use o comando via `docker exec` da seção 5.
+
+
+---
+
+## Ajustes pós-Fase 1
+
+1. **Loadgen calibrado para o modo normal ficar verde.** Respostas HTTP: cerca de 94% de sucesso, 4% de 404, 0,6% de 500 e 0,4% de 401. DNS: 4% de nomes inexistentes (antes 15%). Queries lentas: 1,5% (antes 3%). Medido depois: erro 4xx médio 3,7%, 5xx médio 0,6%, NXDOMAIN médio 2,9%.
+2. **Taxas em janela de 30 s.** Taxa de erro calculada só com os 5 s do último ciclo oscila demais (um erro em 25 requisições vira 4%). O coletor agora soma os últimos 30 s (classe `Janela` em `util.py`).
+3. **DNS com duas métricas separadas.**
+   - `nxdomain_rate`: percentual de respostas `NXDOMAIN` ("esse nome não existe"). É uma resposta **válida**: o servidor funcionou e o cliente perguntou por um nome errado. É erro do cliente e não gera alerta.
+   - `failure_rate`: percentual de respostas `SERVFAIL`, `REFUSED` e similares, somado aos timeouts da sonda do monitor. É falha do **servidor**: ele não conseguiu ou não quis responder. **Só esta dispara alerta.**
+   - Por que separar: se NXDOMAIN contasse como falha, um usuário digitando um domínio errado deixaria o painel vermelho sem que nada estivesse quebrado.
+4. **Crescimento do banco.** `db_growth_mb_per_h` e `db_growth_gb_per_day` (projeção linear: MB/h vezes 24, dividido por 1024). São calculados comparando o tamanho atual com a leitura mais antiga dos últimos 15 min, buscada no próprio SQLite (`storage.first_value`). Só aparecem depois de 60 s de histórico.
+5. **Repositório remoto** configurado em https://github.com/tiagolm16/monitor-redes. O primeiro push exige login no GitHub.
+
+---
+
+## Fase 2: front-end e alertas
+
+### 1. O que foi feito
+
+- **Motor de alertas** (`monitor/app/alerts.py`) com regras em `monitor/alerts.yaml`: 14 regras em 4 serviços, 3 níveis, histerese por número de ciclos, agregações (último, média, máximo, soma, p95).
+- **E-mails** `[ATENÇÃO]`, `[CRÍTICO]` e `[RECUPERADO]`, em HTML simples com serviço, métrica, valor atual, limiar, horário e link para o dashboard. Padrão: Mailpit. Opcional: SMTP real por variáveis de ambiente, sem credencial no repositório (`.env` ignorado pelo Git).
+- **Histórico** na tabela `alerts`: uma linha por incidente, com nível atual, pior nível, abertura, resolução e a lista de eventos (cada mudança de nível).
+- **API nova ou ampliada**: `/api/services` agora traz `nivel` e `alertas_ativos`; `/api/alerts` aceita `service`, `level`, `active` e `limit`; `/api/alert-rules` mostra cada regra com o valor avaliado agora.
+- **Front-end** estático (HTML, CSS e JS puros, Chart.js por CDN): Visão Geral (card por serviço com cor, 3 métricas, mini gráfico, alertas ativos e últimos alertas), uma página por serviço com todos os gráficos obrigatórios e seletor de 5 min, 15 min ou 1 hora, página de Alertas (ativos em destaque, filtros por nível e serviço, tabela de regras) e Segurança como placeholder. Tema escuro, responsivo, atualização a cada 5 s, indicador de última atualização e faixa de aviso se a API parar.
+- **Screenshots** em `docs/img/` (desktop e celular).
+
+### 2. Decisões e alternativas
+
+| Decisão | Por que | Alternativa |
+|---|---|---|
+| Regras em YAML | Legível, editável sem mexer em código, e a professora vê os limiares num arquivo | Regras no código Python (mais rápido, menos transparente) |
+| Histerese por número de ciclos | Evita alerta por um pico de 1 leitura e evita "pisca-pisca" na recuperação | Alertar na primeira leitura ruim (gera spam e falsos positivos) |
+| Agregação sobre janela (p95, média, soma) | Latência e erros oscilam. Comparar um número que resume 1 minuto é mais justo que uma leitura isolada | Comparar sempre a última leitura |
+| Um incidente = uma linha com lista de eventos | Mostra abertura, mudanças e resolução num só registro | Uma linha por evento (mais difícil de ler no histórico) |
+| Motor no mesmo processo do monitor, logo após gravar o ciclo | Sem fila nem processo extra, lê os dados recém gravados | Serviço separado de alertas (mais flexível, mais peças) |
+| Front sem framework, roteamento por `#hash` | Sem build nem npm, fácil de explicar; o FastAPI só serve arquivos estáticos | React ou Vue (produtivo em apps grandes, mas exige build) |
+| Gráficos com eixo de categorias (hora formatada) | Não precisa de adaptador de datas para o Chart.js | Escala de tempo do Chart.js com adaptador |
+| Estado dos alertas reidratado do SQLite ao iniciar | Reiniciar o monitor com incidente aberto não gera e-mail duplicado | Começar sempre do verde |
+| Variável `SMTP_TLS` (e não `TLS`) | Nome mais claro e sem risco de colidir com outra variável | `TLS` |
+
+### 3. Conceitos de redes envolvidos
+
+**Como o e-mail sai (SMTP).** O monitor abre uma conexão **TCP na porta 1025** do Mailpit (em servidor real seria 25, 587 ou 465) e conversa em texto:
+
+```
+S: 220 mailpit ESMTP                      (banner: servidor pronto)
+C: EHLO monitor                           (cliente se apresenta e pergunta as extensões)
+S: 250-... 250 ...
+C: MAIL FROM:<alertas@lab.local>          (envelope: quem envia)
+S: 250 ok
+C: RCPT TO:<ops@lab.local>                (envelope: para quem)
+S: 250 ok
+C: DATA                                   (a partir daqui vem a mensagem)
+S: 354 end data with <CR><LF>.<CR><LF>
+C: Subject: [CRÍTICO] db: ... (cabeçalhos + corpo HTML) .
+S: 250 queued
+C: QUIT
+```
+
+`MAIL FROM` e `RCPT TO` formam o **envelope** (usado na entrega). Os cabeçalhos `From:` e `To:` dentro do `DATA` são o que o leitor vê. Em SMTP real, a porta 587 inicia em texto e muda para criptografado com o comando `STARTTLS`; a 465 já começa criptografada (TLS implícito). É o que as opções `starttls` e `ssl` de `SMTP_TLS` fazem. SMTP está na camada de aplicação e usa TCP.
+
+**HTTP nas duas pontas.** O navegador chama a API REST do monitor por HTTP (TCP 8000) a cada 5 s com `fetch`, e a resposta é JSON. É o mesmo princípio do monitor chamando o nginx, só que invertido.
+
+**Latência p95.** Percentil 95: o valor abaixo do qual ficam 95% das medições. Se em 60 s tivemos 12 medições e a lista ordenada termina em `..., 60, 80, 215`, o p95 é 215. Ele mostra quase o pior caso, mas não é dominado por um único outlier extremo como o máximo.
+
+### 4. Fluxo do dado: do serviço até o gráfico
+
+```
+serviço -> coletor (5 s) -> SQLite (metrics) -+-> motor de alertas -> SQLite (alerts) -> e-mail (SMTP 1025) -> Mailpit
+                                              |
+                                              +-> API REST (/api/services, /metrics, /alerts) -> fetch a cada 5 s -> Chart.js
+```
+
+1. O coletor grava as métricas do ciclo.
+2. Logo depois o motor lê o SQLite, agrega cada regra, compara com os limiares e aplica a histerese.
+3. Se o nível oficial mudou, grava o incidente e dispara o e-mail em segundo plano (falha de SMTP não trava a coleta).
+4. O navegador pede `/api/health`, `/api/services`, `/api/metrics` e `/api/alerts`. O Chart.js redesenha sem animação, então a tela não pisca.
+
+### 5. Como o motor decide o nível (exemplo numérico)
+
+Regra `web_latencia_p95`: operador `>`, amarelo 300 ms, vermelho 1000 ms, 3 ciclos para piorar e 3 para melhorar. Cada ciclo dura 5 s.
+
+| Ciclo | p95 medido | Nível "bruto" | Contagem | Nível oficial | O que acontece |
+|---|---|---|---|---|---|
+| 1 | 80 | verde | 0 | verde | nada |
+| 2 | 350 | amarelo | 1 | verde | ainda não, só 1 leitura |
+| 3 | 90 | verde | 0 | verde | voltou, contagem zera (pico isolado, sem e-mail) |
+| 4 a 6 | 350, 400, 380 | amarelo | 1, 2, 3 | **amarelo** | no ciclo 6 abre incidente, e-mail `[ATENÇÃO]` |
+| 7 a 9 | 1200 | vermelho | 1, 2, 3 | **vermelho** | no ciclo 9, e-mail `[CRÍTICO]` |
+| 10 a 12 | 120 | verde | 1, 2, 3 | **verde** | no ciclo 12 resolve e envia `[RECUPERADO]` |
+
+Regras de decisão: o nível bruto é vermelho se o valor ultrapassa o limiar vermelho, senão amarelo se ultrapassa o amarelo, senão verde. O nível oficial só muda depois de N leituras seguidas no mesmo novo nível. A cor do serviço é o pior nível entre as suas regras.
+
+**Por que histerese (duração mínima).** Sem ela, uma única medição ruim (um pacote atrasado, uma query lenta) gera e-mail, e uma métrica que oscila em torno do limiar gera uma enxurrada de "caiu, voltou, caiu". Exigir N ciclos seguidos filtra ruído e só deixa passar problemas que se mantêm. O custo é um atraso na detecção (10 a 15 s), aceitável aqui. Para um serviço cair usamos 2 ciclos (10 s) e para recuperar 3 (15 s), para ter certeza de que estabilizou. Não há reenvio enquanto o nível não muda.
+
+### 6. Tabela de regras de alerta (limiares finais)
+
+| Serviço | Regra | Métrica e agregação | Amarelo | Vermelho | Ciclos (piora/melhora) |
+|---|---|---|---|---|---|
+| web | Disponibilidade | `up`, último | n/a | `< 1` | 2 / 3 |
+| web | Latência HTTP | `latency_ms`, p95 de 60 s | `> 300 ms` | `> 1000 ms` | 3 / 3 |
+| web | Taxa de erro 5xx | `error_rate_5xx` (janela 30 s) | `> 5%` | `> 15%` | 3 / 3 |
+| db | Disponibilidade | `up`, último | n/a | `< 1` | 2 / 3 |
+| db | Conexões em uso | `connections_percent`, último | `> 70%` | `> 90%` | 3 / 3 |
+| db | Slow queries | `slow_queries`, soma de 60 s | `> 8` | `> 20` | 3 / 3 |
+| db | Rollbacks | `rollbacks_per_s`, média de 60 s | `> 0,5/s` | `> 2/s` | 3 / 3 |
+| dns | Disponibilidade | `up`, último | n/a | `< 1` | 2 / 3 |
+| dns | Tempo de resolução | `resolve_ms`, p95 de 60 s | `> 100 ms` | `> 500 ms` | 3 / 3 |
+| dns | Falhas do servidor | `failure_rate` (janela 30 s) | `> 2%` | `> 10%` | 3 / 3 |
+| smtp | Disponibilidade | `up`, último | n/a | `< 1` | 2 / 3 |
+| smtp | Taxa de entrega | `delivery_rate`, último (janela 60 s) | `< 95%` | `< 80%` | 3 / 3 |
+| smtp | Fila de envio | `queue_size`, último | `> 5` | `> 20` | 3 / 3 |
+| smtp | Latência de envio | `send_latency_ms`, média de 60 s | `> 500 ms` | `> 2000 ms` | 3 / 3 |
+
+### 7. Comandos para rodar e verificar
+
+```powershell
+docker compose up -d --build
+# Dashboard: http://localhost:8000   Mailpit: http://localhost:8025
+curl.exe localhost:8000/api/alert-rules              # estado de cada regra
+curl.exe "localhost:8000/api/alerts?active=true"     # incidentes abertos
+
+# Teste de queda do banco
+docker compose stop postgres      # em ~10 s o card fica vermelho e chega [CRÍTICO] no Mailpit
+docker compose start postgres     # em ~15 s chega [RECUPERADO]
+
+# Teste de queda do nginx
+docker compose stop nginx
+docker compose start nginx
+```
+
+**Resultado dos testes de queda (executados de verdade):**
+
+| Teste | Parada | Vermelho + e-mail | Volta | Recuperado + e-mail |
+|---|---|---|---|---|
+| PostgreSQL | 17:06:53 | 17:07:04 (11 s), `[CRÍTICO] db: PostgreSQL fora do ar` | 17:07:10 | 17:07:22, `[RECUPERADO] db: ...` (incidente de 18 s) |
+| nginx | 17:07:32 | 17:07:46 (14 s), `[CRÍTICO] web: Web fora do ar (HTTP check)` | 17:07:56 | 17:08:12, `[RECUPERADO] web: ...` |
+
+Cada queda gerou exatamente 2 e-mails (um crítico e um de recuperação), sem repetição. Os outros serviços ficaram verdes durante os testes. No celular (375 px de largura) a página não tem rolagem horizontal; as tabelas largas rolam dentro do próprio quadro.
+
+Screenshots em `docs/img/`: `desktop-visao-geral.png`, `desktop-web.png`, `desktop-banco.png`, `desktop-alertas.png`, `mobile-visao-geral.png`, `mobile-web.png`, `mobile-alertas.png`. Os de celular foram gerados com 500 px de largura (mínimo do Chrome sem interface); a verificação a 375 px foi feita no navegador do app.
+
+### 8. Perguntas que a professora pode fazer
+
+- **Por que o alerta não dispara na primeira leitura ruim?** Para filtrar ruído. Exigimos N ciclos seguidos (histerese) para só alertar problemas que se mantêm.
+- **O que acontece se a métrica oscila em volta do limiar?** A contagem zera a cada volta ao nível anterior, então nada dispara e não há spam.
+- **Diferença entre NXDOMAIN e SERVFAIL?** NXDOMAIN: o servidor respondeu corretamente que o nome não existe (erro do cliente). SERVFAIL: o servidor falhou ao resolver (erro do servidor). Só o segundo gera alerta.
+- **Como o e-mail é enviado?** Conexão TCP na porta 1025 e os comandos EHLO, MAIL FROM, RCPT TO, DATA; a mensagem termina com um ponto sozinho numa linha.
+- **Qual a diferença entre a porta 587 e a 465?** A 587 começa em texto e passa a TLS com STARTTLS. A 465 já começa com TLS.
+- **Por que p95 e não a média?** A média esconde picos e o máximo é sensível a um único outlier. O p95 mostra quase o pior caso típico.
+- **Como se evita e-mail duplicado se o monitor reiniciar?** Os incidentes abertos ficam no SQLite e são recarregados ao iniciar.
+- **Por que o front não usa React?** Para não precisar de build nem de npm, e porque a aplicação é pequena. O FastAPI serve os arquivos estáticos.
+- **Como o navegador fica atualizado?** Chama a API REST a cada 5 s (polling) e redesenha os gráficos. Alternativas: WebSocket ou Server-Sent Events.
+
+### 9. Problemas encontrados e como foram resolvidos
+
+1. **Conflito de nome `SMTP_HOST`.** Na Fase 1 a variável apontava para o Mailpit nas sondas. Como o envio de alertas precisa usar um SMTP real com essas mesmas variáveis, as sondas passaram a usar `MAILPIT_HOST` e ficam sempre no Mailpit.
+2. **Tabela `alerts` antiga.** O esquema da Fase 1 era simples demais para incidentes com mudanças de nível. Como estava vazia, é recriada automaticamente se faltar a coluna `opened_ts`.
+3. **Valores antigos com o serviço fora do ar.** Os cards mostravam o último QPS de antes da queda. Agora, se o serviço está fora, as métricas aparecem como `-`.
+4. **Gráfico de conexões espremido** pela linha de `max_connections` (100). A linha foi removida; o percentual de uso está na regra de alerta.
+5. **Screenshot "cortado" no celular.** O Chrome sem interface tem largura mínima de 500 px e recortava a imagem. A checagem de overflow foi feita no navegador do app a 375 px e os screenshots de celular usam 500 px.
+6. **Risco de falso positivo.** Slow queries e rollbacks são raros mas aleatórios. Reduzi a frequência no loadgen e usei limiares com folga (slow queries `> 8` por minuto contra uma média de cerca de 2).
