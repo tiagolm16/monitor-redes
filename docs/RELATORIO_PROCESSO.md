@@ -281,3 +281,164 @@ Screenshots em `docs/img/`: `desktop-visao-geral.png`, `desktop-web.png`, `deskt
 4. **Gráfico de conexões espremido** pela linha de `max_connections` (100). A linha foi removida; o percentual de uso está na regra de alerta.
 5. **Screenshot "cortado" no celular.** O Chrome sem interface tem largura mínima de 500 px e recortava a imagem. A checagem de overflow foi feita no navegador do app a 375 px e os screenshots de celular usam 500 px.
 6. **Risco de falso positivo.** Slow queries e rollbacks são raros mas aleatórios. Reduzi a frequência no loadgen e usei limiares com folga (slow queries `> 8` por minuto contra uma média de cerca de 2).
+
+
+---
+
+## Fase 3: segurança, testes e evidências
+
+### 1. O que foi feito
+
+- **Loadgen com 3 modos trocáveis ao vivo** (sem rebuild), por uma API interna na porta 8090 (`POST /mode/normal|pico|bruteforce`), com botões na aba Segurança e proxy em `/api/loadgen`.
+  - `normal`: tráfego legítimo vindo de 12 IPs ficcionais (faixa `198.51.100.0/24`).
+  - `pico`: rajada de cerca de 150 a 200 requisições por segundo, vinda de 3 IPs (`203.0.113.7`, `.8`, `.9`), por cima do tráfego normal.
+  - `bruteforce`: 2 IPs (`203.0.113.50` e `.51`) tentando senhas erradas em `/admin` (cerca de 5 por segundo cada) e logins com senha errada no Postgres (usuários `admin`, `postgres`, `root` e `app`).
+- **nginx com `real_ip`**: o IP real do cliente vem do header `X-Forwarded-For`, mas só quando a conexão chega da rede interna. O log JSON ganhou os campos `peer` (IP da conexão TCP) e `user` (conta usada no Basic Auth).
+- **Postgres** com `%h` no `log_line_prefix`, para o log de falhas de login trazer o IP de origem.
+- **Coletor de segurança** (`collectors/seguranca.py`, serviço `security`) com 4 monitoramentos:
+  1. **Anomalia de tráfego (DDoS)**: z-score do RPS contra baseline móvel de 10 min e top 5 IPs do access log.
+  2. **Brute force**: falhas de autenticação por IP e por conta numa janela de 60 s, de duas fontes (401 no `/admin` e "password authentication failed" no log do container do Postgres, lido pela API do Docker).
+  3. **Alteração de configuração** (`config_watch.py`): SHA-256 de todos os arquivos de `/config` contra a baseline guardada no SQLite, com diff e endpoint para aceitar nova baseline.
+  4. **Vulnerabilidades**: contêiner Trivy (profile `scan`) grava um JSON por serviço num volume; o monitor lê, conta por severidade e lista os principais CVEs.
+- **5 regras novas** no `alerts.yaml` (todas com e-mail, e os e-mails de segurança levam os IPs, o diff ou os CVEs no corpo).
+- **Aba Segurança** do dashboard, card de Segurança na Visão Geral e **menu hambúrguer** no celular.
+- **Scripts de demo** em `scripts/` (PowerShell): `demo_queda.ps1`, `demo_ddos.ps1`, `demo_bruteforce.ps1`, `demo_config.ps1`, `demo_reset.ps1`.
+- **Suíte E2E** com Playwright (Python) em `tests/e2e/` (16 casos), `docs/TESTES.md` e **script de figuras** `scripts/capturar_prints.py` com `docs/img/LEGENDAS.md`.
+
+### 2. Decisões e alternativas
+
+| Decisão | Por que | Alternativa |
+|---|---|---|
+| Modo do loadgen por API HTTP na porta 8090 | Troca ao vivo com um comando ou clique, sem rebuild nem editar arquivo | Arquivo de controle lido a cada ciclo (também funcionaria, mas é menos direto de demonstrar) |
+| IPs de origem simulados por `X-Forwarded-For` + `real_ip` | Dentro do Docker todo tráfego sairia do mesmo IP. Com o header, o log do nginx mostra origens diferentes, como atrás de um balanceador | Vários containers atacantes (mais pesado) ou IPs reais por interface de rede (complexo) |
+| Faixas `198.51.100.0/24` e `203.0.113.0/24` | São reservadas para documentação (RFC 5737): nunca existem na internet real | IPs privados (`10.x`), que poderiam ser confundidos com a rede interna |
+| z-score com baseline que **não absorve** amostras anômalas | Se o ataque entrasse na média, ela subiria e o próprio ataque "viraria normal" em poucos minutos | Média e desvio simples sobre tudo (mais fácil, mas cego a ataques longos) |
+| Piso de 0,5 no desvio padrão | Evita z-score gigante quando o tráfego histórico é quase constante | Sem piso (qualquer variação pequena viraria alerta) |
+| Regra dupla: z-score **e** razão (10x a baseline) | O z-score depende do desvio; a razão é uma segunda opinião simples de explicar | Só z-score |
+| Falhas contadas por IP **e** por conta | O IP identifica quem ataca. A conta mostra o alvo (ex.: `admin`) | Contar só o total (um ataque distribuído e pequenos erros normais ficariam misturados) |
+| Log do Postgres lido pela API do Docker | O monitor já tem o `docker.sock`. Não precisa de volume extra nem de `logging_collector` | Gravar o log do Postgres num volume compartilhado |
+| Hash SHA-256 e baseline no SQLite, com conteúdo guardado | Permite o diff legível. A primeira execução define o estado "confiável" | Só guardar o hash (detecta, mas não mostra o que mudou) |
+| Diretório `/config` montado, não arquivos soltos | Um editor que troca o arquivo (novo inode) quebra o mount de arquivo único, mas o diretório sempre reflete a mudança | Montar cada arquivo |
+| Trivy em contêiner com `profile: scan` | Não roda no `up` normal (o scan é pesado) e não exige instalar nada no Windows | Instalar o Trivy no host, ou usar a API do OSV (plano B, não foi necessário) |
+| Alerta de CVE CRITICAL em **amarelo** (vermelho acima de 10 CRITICAL) | Vulnerabilidade conhecida em imagem pública é risco, não incidente em andamento. Vermelho permanente tornaria o painel inútil na apresentação | Vermelho sempre que houver CRITICAL |
+| Menu hambúrguer abaixo de 600 px | Com 7 itens, a barra horizontal rolável escondia opções no celular | Manter a barra rolável |
+
+### 3. Conceitos de redes e segurança envolvidos
+
+**DDoS (Distributed Denial of Service).** Ataque de negação de serviço distribuído: muitas origens enviam tráfego em volume tão alto que o servidor não consegue atender os usuários legítimos. "Distribuído" porque vem de muitos IPs (uma botnet). Atinge a camada de aplicação (muitas requisições HTTP, o caso simulado aqui), de transporte (inundação de SYN) ou de rede (saturação de banda). Aqui simulamos o primeiro tipo, com poucas origens para facilitar a leitura.
+
+**Por que o z-score detecta o pico.** O z-score diz **quantos desvios padrão** um valor está acima da média do passado:
+
+```
+z = (x - média) / desvio padrão
+```
+
+Exemplo numérico (valores reais do experimento): a baseline dos últimos 10 min tinha média **4,7 req/s** e desvio padrão **1,47**. Durante o pico o RPS foi **224 req/s**:
+
+```
+z = (224 - 4,7) / 1,47 = 149    (o sistema mediu 147,7 com os valores exatos)
+razão = 224 / 4,7 = 47,4x
+```
+
+Com o tráfego normal, a regra "z > 3" cai em cerca de 10 req/s (4,7 + 3 x 1,47 = 9,1). Se o tráfego oscila entre 3 e 7, o z-score fica entre -1 e 2 e nada dispara. Se uma campanha de vendas dobra o tráfego aos poucos, o desvio acompanha. Um valor 3 desvios acima é raro por acaso (cerca de 0,1% das amostras numa distribuição normal), e 6 desvios é praticamente impossível por acaso, por isso o vermelho. A vantagem sobre um limite fixo (por exemplo "mais de 100 req/s") é que o limite **se adapta** ao que é normal para cada sistema.
+
+**Cabeçalho `X-Forwarded-For` e `real_ip`.** Quando um balanceador ou CDN fica na frente do servidor, o IP que o nginx vê na conexão TCP é o do balanceador. O balanceador passa o IP do cliente no header `X-Forwarded-For`. O módulo `real_ip` do nginx troca `$remote_addr` por esse valor, **só se a conexão vier de um endereço confiável** (`set_real_ip_from`). Isto é crucial: se confiasse em qualquer origem, um atacante poderia escrever `X-Forwarded-For: 1.2.3.4` e se passar por outro IP (para fugir do bloqueio ou incriminar um inocente). Aqui só a rede `172.28.77.0/24` do Docker é confiável. **Limitação honesta**: o gateway do host também está nessa faixa, então quem acessa `localhost:8081` pelo próprio computador chegaria como confiável. Em produção, confie só no IP exato do balanceador (por exemplo `set_real_ip_from 172.28.77.21;`).
+
+**Brute force e por que contar falhas por IP.** Brute force é adivinhar credenciais testando muitas tentativas. Uma falha de login isolada é normal (alguém errou a senha). O sinal é a **repetição vinda da mesma origem em pouco tempo**. Contar por IP isola o atacante (e permitiria bloquear só ele); contar só o total misturaria erros legítimos de muitos usuários. Contar por conta mostra o alvo (o ataque aqui concentra em `admin`) e revela *password spraying* (uma senha testada em muitas contas) quando várias contas têm poucas falhas cada. As duas fontes: **HTTP 401** é "não autenticado" no Basic Auth do `/admin`; no Postgres, o log registra `FATAL: password authentication failed for user "x"` com o IP de origem (`%h`).
+
+**Hash criptográfico e SHA-256.** Uma função hash transforma qualquer conteúdo em um resumo de tamanho fixo (SHA-256: 256 bits, escritos como 64 caracteres hexadecimais). Propriedades que importam: (1) o mesmo arquivo sempre dá o mesmo hash; (2) mudar **um único caractere** muda o hash completamente (efeito avalanche); (3) é inviável construir outro arquivo com o mesmo hash. Por isso comparar o hash atual com o hash guardado detecta qualquer alteração, mesmo de um comentário. Exemplo do experimento: `nginx.conf` original `34f18a37...` virou `bd1ad5bd...` depois de acrescentar uma linha de comentário. Detectar alteração de configuração importa porque invasores e erros humanos costumam mexer em arquivos de configuração (abrir uma porta, desligar autenticação), e é um requisito comum de conformidade (integridade de arquivos).
+
+**CVE e CVSS.** **CVE** (*Common Vulnerabilities and Exposures*) é o identificador público de uma vulnerabilidade conhecida, por exemplo `CVE-2024-12797`, mantido pela MITRE e usado por NVD, distribuições Linux e fornecedores. **CVSS** (*Common Vulnerability Scoring System*) dá uma nota de 0 a 10 de gravidade: 0,1 a 3,9 baixa (LOW), 4,0 a 6,9 média (MEDIUM), 7,0 a 8,9 alta (HIGH) e 9,0 a 10 crítica (CRITICAL). A nota considera como a falha é explorada (rede ou local, precisa de senha ou não) e o impacto em confidencialidade, integridade e disponibilidade.
+
+**Como o Trivy funciona.** (1) Lê as **camadas** da imagem de container e identifica o sistema operacional (Alpine, Debian...); (2) lista os **pacotes instalados** (`apk`, `dpkg`) e as dependências de binários Go (CoreDNS e Mailpit são binários Go); (3) compara cada pacote e versão com um **banco de vulnerabilidades** (compilado de NVD, avisos das distribuições e outras fontes) que ele baixa e guarda em cache; (4) gera o relatório com ID do CVE, severidade, versão instalada e versão corrigida, quando existe. O Trivy não executa a imagem, só a analisa. O resultado depende da qualidade e atualização do banco: um achado de "0 vulnerabilidades" pode significar banco vazio (ver problemas).
+
+**Fluxo do SMTP dos alertas de segurança.** Igual ao da Fase 2 (TCP 1025, `EHLO`, `MAIL FROM`, `RCPT TO`, `DATA`), agora com um bloco extra no corpo (IPs, hashes, diff ou CVEs).
+
+### 4. Fluxo do dado: do serviço até o gráfico
+
+```
+ loadgen (modo)     nginx (log JSON: IP real, status, user)        monitor
+ -----------        -------------------------------------          --------------------------------------------
+ pico / brute  --->  access.log (volume) ------------------------> seguranca.py: RPS, z-score, top IPs, 401 por IP/conta
+               --->  postgres (stderr) --> API do Docker --------> seguranca.py: "password authentication failed"
+ ./services (ro) ---------------------------------------------------> config_watch.py: SHA-256 vs baseline (SQLite)
+ trivy (profile scan) --> volume trivy-results (JSON) -------------> seguranca.py: contagem por severidade e CVEs
+                                                                      |
+                                       SQLite (metrics, config_baseline) --> motor de alertas --> e-mail (Mailpit)
+                                                                      |
+                                           /api/security, /api/metrics --> aba Segurança (Chart.js, tabelas)
+```
+
+1. O loadgen gera o tráfego; o nginx escreve no log o IP real, o status e a conta usada.
+2. A cada 5 s o coletor lê só as linhas novas do log, soma as falhas e as requisições por IP numa janela deslizante e calcula RPS e z-score.
+3. O coletor grava as métricas (`rps`, `rps_zscore`, `max_auth_failures_per_ip`, `config_changed_files`, `vulns_critical_total`...) no SQLite com `service = security`.
+4. O motor de alertas avalia as 5 regras novas como as das fases anteriores, abre o incidente e envia o e-mail (com os detalhes do coletor).
+5. A aba Segurança lê `/api/security` (tabelas) e `/api/metrics` (gráficos) a cada 5 s.
+
+### 5. Comandos para rodar e verificar
+
+```powershell
+docker compose up -d --build
+docker compose --profile scan run --rm trivy        # scan de vulnerabilidades (1a vez baixa ~140 MB)
+
+# Demos (cada uma imprime o que faz e quanto tempo levou)
+.\scripts\demo_queda.ps1 postgres
+.\scripts\demo_ddos.ps1
+.\scripts\demo_bruteforce.ps1
+.\scripts\demo_config.ps1
+.\scripts\demo_reset.ps1
+
+# Trocar o modo ao vivo
+Invoke-RestMethod -Method Post http://localhost:8090/mode/pico
+
+# Testes e figuras
+python -m pytest tests/e2e
+python scripts/capturar_prints.py
+```
+
+**Resultados medidos das demos (execução real):**
+
+| Demo | Ação | Tempo até o alerta | Recuperação |
+|---|---|---|---|
+| `demo_queda.ps1 postgres` | `docker compose stop postgres` | card vermelho e e-mail `[CRÍTICO]` em **9,7 s** | volta ao verde em **13,4 s** depois do `start` |
+| `demo_ddos.ps1` | modo `pico` (RPS 224, z-score 147,7, razão 47x) | alerta em **10,3 s** | resolvido **20,4 s** depois de voltar ao normal |
+| `demo_bruteforce.ps1` | modo `bruteforce` (2 IPs no `/admin` e logins no Postgres) | alerta em **14,6 s** | resolvido **72,9 s** depois (a janela de falhas é de 60 s) |
+| `demo_config.ps1` | comentário acrescentado ao `nginx.conf` | alerta em **5,1 s** | resolvido **8,1 s** depois de restaurar o arquivo |
+
+Resultado do scan (Trivy, banco de vulnerabilidades do espelho da AWS ECR):
+
+| Serviço | Imagem | CRITICAL | HIGH | MEDIUM | LOW |
+|---|---|---|---|---|---|
+| web | nginx:1.27-alpine | 3 | 67 | 103 | 46 |
+| db | postgres:16 | 2 | 154 | 210 | 172 |
+| dns | coredns/coredns:1.11.3 | 2 | 55 | 67 | 5 |
+| smtp | axllent/mailpit:v1.21 | 3 | 79 | 118 | 41 |
+
+São imagens públicas antigas; os CVEs são reais. Isso mantém o card de Segurança em amarelo (10 CRITICAL somados), o que é um achado legítimo e não um defeito. A correção recomendada é atualizar as imagens para versões mais novas.
+
+### 6. Perguntas que a professora pode fazer
+
+- **O que é um DDoS e como vocês simulam?** Negação de serviço distribuída: muitas origens inundam o servidor. Simulamos com uma rajada de 150 a 200 requisições por segundo vinda de 3 IPs ficcionais, usando o header `X-Forwarded-For`.
+- **Por que z-score e não um limite fixo?** O z-score mede o desvio em relação ao normal **daquele sistema** e se adapta. Um limite fixo precisa ser ajustado à mão e falha quando o tráfego legítimo cresce.
+- **O que acontece se o ataque durar muito?** A baseline não absorve amostras anômalas, então o alerta se mantém. Se a "anomalia" persistir por 5 minutos, ela vira o novo normal (trade-off para não ficar em alerta para sempre).
+- **Por que contar falhas por IP?** Para isolar o atacante e não confundir com erros legítimos de muitos usuários. Também conta por conta para ver o alvo.
+- **O nginx confia em qualquer `X-Forwarded-For`?** Não. Só em conexões vindas da rede interna do Docker. Se confiasse em qualquer origem, o atacante poderia falsificar o IP.
+- **O que é um hash e por que SHA-256 detecta alteração?** Um resumo de 256 bits do conteúdo. Mudar um caractere muda o hash inteiro, e não dá para fabricar outro arquivo com o mesmo hash.
+- **E se a alteração for legítima?** O botão "Aceitar nova baseline" grava o estado atual como o novo normal e o alerta é resolvido.
+- **O que é CVE e CVSS?** CVE é o identificador de uma vulnerabilidade pública. CVSS é a nota de 0 a 10 da gravidade (9,0 ou mais é crítica).
+- **Como o Trivy sabe que há vulnerabilidade?** Lê os pacotes da imagem e compara nome e versão com um banco de CVEs, informando a versão corrigida.
+- **Por que o card de Segurança está amarelo mesmo com tudo calmo?** Porque as imagens públicas usadas têm CVEs CRITICAL conhecidos. Pelas regras, isso é amarelo (atenção).
+- **O brute force também dispara o alerta de tráfego?** Sim, porque as tentativas aumentam o RPS (de 5 para cerca de 15 req/s, z-score acima de 6). É um efeito real do ataque, não um erro.
+
+### 7. Problemas encontrados e como foram resolvidos
+
+1. **Trivy sem achados (banco "vazio").** O primeiro scan terminou sem erro mas com 0 vulnerabilidades em todas as imagens. O banco baixado do `ghcr.io` tinha apenas 16 KB (um arquivo praticamente vazio). Solução: apontar `TRIVY_DB_REPOSITORY` para o espelho `public.ecr.aws/aquasecurity/trivy-db:2` (banco real de 1,8 GB descompactado). O plano B (API do OSV) respondeu normalmente nos testes, mas não precisou ser usado.
+2. **Mudanças nos arquivos de config não aplicadas.** O nginx e o Postgres montam os arquivos de configuração individualmente e só os relêem ao reiniciar. Depois de editar `nginx.conf` e `postgresql.conf` foi preciso `docker compose restart nginx postgres` (sem isso o log continuava mostrando o IP do loadgen e sem o campo `peer`).
+3. **`0 segundos` tratado como "falso" no PowerShell.** `if ($t)` falha quando o tempo medido é 0. Trocado por `$null -ne $t` em todos os scripts.
+4. **Acentos quebrados no PowerShell 5.1.** O PowerShell 5.1 lê JSON sem `charset` como Latin-1, e os scripts sem BOM são lidos como ANSI. Solução: scripts salvos em UTF-8 com BOM e funções que decodificam a resposta como UTF-8.
+5. **Processo em segundo plano morrendo.** Um `comando &` dentro de uma sessão encerra junto com ela. Os scans e testes longos passaram a rodar como a própria tarefa em segundo plano.
+6. **Brute force disparando também o alerta de tráfego** e **latência de DNS subindo depois dos ataques**. Ambos são efeitos reais (mais requisições e CPU disputada no Docker Desktop). Foram mantidos e documentados, pois reforçam a explicação de que ataques têm efeitos colaterais visíveis.
+7. **Testes sensíveis ao tempo.** Na primeira execução da suíte, 3 dos 16 testes falharam por tempo: duas esperas de alteração de config e um print de celular. O Docker Desktop pode demorar a propagar para o container uma alteração de arquivo feita no Windows (vimos até cerca de 80 s numa rodada com carga, contra 5 a 8 s nas demos). Os tempos limite foram ampliados. Na rodada seguinte, o teste do z-score falhou por ler o valor cedo demais (4,7 em vez de passar de 6, porque o pico ainda estava "enchendo" a janela); passou a esperar o z-score cruzar o limiar. A execução final teve **16 de 16 aprovados**. Detalhes em `docs/TESTES.md`.
+7b. **Teste que sujou o `nginx.conf`.** Os testes de configuração acrescentam linhas ao `nginx.conf` e o restauram no final. Uma falha no meio deixou as linhas de teste no arquivo, e as figuras seguintes saíram com a baseline errada (o diff mostrava "mudança autorizada" nos dois lados). Correções: a suíte agora limpa essas linhas antes e depois de rodar, e o teste de "aceitar baseline" só aceita depois que o monitor enxerga o arquivo restaurado.
+7c. **Figuras com defeito visual.** O cabeçalho fixo (`position: sticky`) aparecia no meio dos prints de trecho de página, e a tabela de IPs suspeitos ficava cortada na grade de 3 colunas. O script desativa o cabeçalho fixo durante a captura e a tabela passou a ocupar a largura inteira.
+8. **Janela de log do Docker.** A API de logs só aceita `since` em segundos inteiros e repete linhas; o coletor guarda o último timestamp visto e descarta as já contadas, para não contar a mesma falha de login duas vezes.

@@ -44,8 +44,51 @@ Crie um arquivo `.env` na raiz (está no `.gitignore`, nunca vai para o reposit�
 
 As sondas de monitoramento do SMTP continuam sempre no Mailpit, independente dessas variáveis.
 
+## Segurança (aba Segurança do dashboard)
+
+| Monitoramento | Como funciona | Alerta |
+|---|---|---|
+| Anomalia de tráfego (DDoS) | z-score do RPS contra baseline de 10 min + top 5 IPs | amarelo z > 3, vermelho z > 6 ou RPS > 10x a baseline |
+| Brute force | falhas de login por IP e por conta em 60 s (401 no `/admin`, "password authentication failed" no Postgres) | amarelo > 10, vermelho > 30 falhas do mesmo IP |
+| Alteração de configuração | SHA-256 dos arquivos de `services/` contra a baseline guardada | amarelo ao mudar 1 arquivo (botão "Aceitar nova baseline") |
+| Vulnerabilidades | Trivy escaneia as imagens e o monitor lê o JSON | amarelo se houver CRITICAL |
+
+Escanear as imagens (baixa o banco de CVEs na primeira vez, cerca de 140 MB):
+
+```powershell
+docker compose --profile scan run --rm trivy
+```
+
+Trocar o modo do gerador de tráfego ao vivo, sem rebuild (também há botões na aba Segurança):
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:8090/mode/pico         # ou normal, bruteforce
+```
+
+## Scripts de demonstração (PowerShell)
+
+```powershell
+.\scripts\demo_queda.ps1 postgres      # nginx, postgres, coredns ou mailpit
+.\scripts\demo_ddos.ps1                # pico de tráfego por 60 s
+.\scripts\demo_bruteforce.ps1          # brute force por 60 s
+.\scripts\demo_config.ps1              # altera o nginx.conf, espera o alerta e desfaz
+.\scripts\demo_reset.ps1               # volta tudo ao normal
+```
+
+Se o PowerShell bloquear a execução: `powershell -ExecutionPolicy Bypass -File .\scripts\demo_ddos.ps1`.
+
+## Testes e figuras
+
+```powershell
+pip install playwright pytest          # usa o Google Chrome instalado, sem baixar outro navegador
+python -m pytest tests/e2e             # suíte E2E (leva alguns minutos: derruba serviços e simula ataques)
+python scripts/capturar_prints.py      # gera as figuras em docs/img/
+```
+
+Casos de teste e resultados: [docs/TESTES.md](docs/TESTES.md). Legendas das figuras: [docs/img/LEGENDAS.md](docs/img/LEGENDAS.md).
+
 ## Status
 
 - [x] Fase 1: infraestrutura, coletores, SQLite, API REST, loadgen modo normal
 - [x] Fase 2: dashboard (Visão Geral, Web, Banco, DNS, SMTP, Alertas) e motor de alertas com e-mail
-- [ ] Fase 3: segurança (brute force, pico/DDoS, alteração de config) e modos pico e bruteforce do loadgen
+- [x] Fase 3: segurança (DDoS, brute force, alteração de config, vulnerabilidades), scripts de demo, testes E2E e figuras
