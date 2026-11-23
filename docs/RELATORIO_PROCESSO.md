@@ -442,3 +442,99 @@ São imagens públicas antigas; os CVEs são reais. Isso mantém o card de Segur
 7b. **Teste que sujou o `nginx.conf`.** Os testes de configuração acrescentam linhas ao `nginx.conf` e o restauram no final. Uma falha no meio deixou as linhas de teste no arquivo, e as figuras seguintes saíram com a baseline errada (o diff mostrava "mudança autorizada" nos dois lados). Correções: a suíte agora limpa essas linhas antes e depois de rodar, e o teste de "aceitar baseline" só aceita depois que o monitor enxerga o arquivo restaurado.
 7c. **Figuras com defeito visual.** O cabeçalho fixo (`position: sticky`) aparecia no meio dos prints de trecho de página, e a tabela de IPs suspeitos ficava cortada na grade de 3 colunas. O script desativa o cabeçalho fixo durante a captura e a tabela passou a ocupar a largura inteira.
 8. **Janela de log do Docker.** A API de logs só aceita `since` em segundos inteiros e repete linhas; o coletor guarda o último timestamp visto e descarta as já contadas, para não contar a mesma falha de login duas vezes.
+
+
+---
+
+## Fase 4: correções finais, documentação e material de apresentação
+
+### 1. O que foi feito
+
+- **Fuso horário.** `TZ=America/Sao_Paulo` em todos os containers (nginx, postgres, coredns, mailpit, monitor, loadgen e trivy), `timezone` e `log_timezone` no `postgresql.conf`, pacote `tzdata` no monitor. O e-mail agora mostra "23/11/2026 18:19:40 (horário de Brasília)", e o painel formata as datas no mesmo fuso. Conferido com um alerta real: o horário do e-mail, o do painel e o do relógio da máquina coincidiram.
+- **Acentuação.** Corrigidas todas as descrições do `alerts.yaml` (configuração, latência, conexões, tráfego, falhas, resolução, não...), os textos dos e-mails (serviço, métrica, horário, duração, "últimos 60 s", "requisições") e as mensagens dos scripts PowerShell. A agregação ganhou nome de exibição (último, média, máximo) no painel e no e-mail. Tudo em UTF-8.
+- **Diagrama de arquitetura** referenciado no `README.md` e no `docs/ARQUITETURA.md` (`docs/img/fig00_arquitetura.png`).
+- **Figuras refeitas** com o histórico de alertas limpo (só a tabela `alerts`; as métricas foram mantidas): `fig01`, `fig06`, `fig07`, `fig08` e `fig09`. Os e-mails das figuras 8 e 9 já saem com o horário certo e com acentos. As demais figuras não mudaram visualmente e foram mantidas.
+- **Documentação nova:** `ARQUITETURA.md`, `INSTALACAO.md`, `RUNBOOKS.md` (5 serviços mais o loadgen), `PLAYBOOKS.md` (7 tipos de incidente), `ROTEIRO_APRESENTACAO.md` (11 min 30 s, com plano B), `ROTEIRO_VIDEO.md` (cerca de 7 min, 9 cenas) e o índice no `README.md`.
+- **`scripts/preparar_apresentacao.ps1`**: sobe tudo, espera ficar verde, limpa o histórico de alertas e abre o painel e o Mailpit.
+- **`scripts/capturar_prints.py`** agora aceita escolher figuras (`python scripts/capturar_prints.py fig01 fig06`).
+- **Opcional, concluído:** branch `imagens-atualizadas` com as imagens estáveis mais recentes, scan do Trivy e testes. Os testes passaram e a branch foi mesclada (merge) no `main`.
+
+### 2. Decisões e alternativas
+
+| Decisão | Por que | Alternativa |
+|---|---|---|
+| `TZ` em todos os containers **e** fuso explícito no código (`ZoneInfo`) e no painel (`timeZone`) | Só a variável `TZ` não basta: o Mailpit mostra o horário no fuso do navegador e imagens sem banco de fusos ignoram `TZ` (CoreDNS e Mailpit são binários Go sem `tzdata`). Formatar no código garante o mesmo horário em qualquer lugar | Só `TZ` (funciona no monitor, mas o painel dependeria do fuso do navegador) |
+| Guardar tudo em UTC (epoch) e converter só na borda | Evita erros de horário de verão e de conversão dupla. O banco e a API trabalham com um número, e a exibição aplica o fuso | Guardar o horário local no banco |
+| Nomes de agregação com acento só na exibição | As chaves do YAML (`ultimo`, `media`) continuam sem acento, estáveis para o código; só o texto mostrado ao usuário é acentuado | Acentuar as chaves do YAML (arriscado) |
+| Apagar só os incidentes **resolvidos** ao limpar o histórico (no script de preparação) | Apagar um incidente ativo faria o motor tentar atualizar uma linha que não existe | Apagar tudo e reiniciar (também funciona, mas deixa picos passageiros de latência no histórico) |
+| Postgres 17 em Alpine | Menos pacotes do sistema, portanto muito menos CVEs. A versão 17 mantém o mesmo conjunto de recursos usado aqui | `postgres:18` (muda o diretório de dados) ou ficar no 16 |
+| `nginx:stable-alpine3.23` | A tag `1.28-alpine` apareceu **pior** no scan (mais CVEs). A linha `stable` traz a base Alpine mais nova | `1.28-alpine` (testado e rejeitado) |
+| Fixar o sistema-base (`alpine3.23`) em vez de usar `latest` | Reprodutibilidade: a mesma imagem hoje e daqui a um mês | `stable-alpine` (muda sozinho) |
+
+### 3. Conceitos de redes e segurança envolvidos
+
+**Fuso horário e UTC.** O horário da máquina vem do sistema, mas um computador "no mundo" precisa de um referencial comum. O **UTC** é esse referencial e não tem horário de verão. O Brasil (Brasília) fica em UTC-3. Boas práticas: guardar e transmitir em UTC e converter para o fuso do usuário só ao exibir. Isso é importante em redes porque logs de servidores diferentes só podem ser comparados (correlação de eventos, investigação de incidentes) se estiverem no mesmo referencial. Em produção, os relógios são sincronizados por **NTP** (protocolo UDP, porta 123). Antes da correção os e-mails saíam em UTC (20:44 para um evento das 17:44), três horas à frente do painel.
+
+**Acentos em e-mail (codificação).** O e-mail nasceu em ASCII de 7 bits. Para levar acentos, o cabeçalho `Subject` é codificado (RFC 2047, algo como `=?utf-8?q?[CR=C3=8DTICO]...?=`) e o corpo declara `Content-Type: text/html; charset="utf-8"` com `Content-Transfer-Encoding`. A biblioteca de e-mail do Python faz isso sozinha, e o cliente (Mailpit) decodifica para exibir "CRÍTICO". Se um lado errar o charset, aparecem caracteres estranhos (como `Ã§Ã£`). Foi o que vimos no terminal do PowerShell 5.1, que lia a resposta JSON como Latin-1.
+
+**Runbooks e playbooks.** São documentos operacionais. O **runbook** é por serviço e diz como verificar a saúde, o que olhar e como recuperar. O **playbook** é por tipo de incidente e diz triagem, contenção, resolução, comunicação e pós-incidente. Dois indicadores que eles ajudam a melhorar: **MTTD** (tempo médio para detectar, nesta plataforma de 5 a 15 s) e **MTTR** (tempo médio para recuperar).
+
+**Vulnerabilidades e cadeia de suprimentos (*supply chain*).** Cada imagem de container é composta por camadas de terceiros. Usar versões fixas (tags específicas) torna o ambiente reproduzível; atualizar para versões mais novas, com menos CVEs, reduz a superfície de ataque. A base **Alpine** tem poucos pacotes, e cada pacote a menos é um risco a menos.
+
+### 4. Fluxo do dado: o horário, do evento até a tela e o e-mail
+
+```
+evento (epoch UTC) --> coletor --> SQLite (ts em epoch UTC) --+--> API (epoch) --> navegador: formata em America/Sao_Paulo
+                                                              |
+                                                              +--> motor de alertas: formata em America/Sao_Paulo --> e-mail (SMTP) --> Mailpit
+```
+
+O horário nunca é guardado em fuso local: o painel e o e-mail formatam o mesmo número com o mesmo fuso, por isso batem.
+
+### 5. Comandos para rodar e verificar
+
+```powershell
+.\scripts\preparar_apresentacao.ps1                  # sobe tudo, limpa o histórico, abre o navegador
+python scripts/capturar_prints.py fig01 fig06 fig07 fig08 fig09   # refaz só algumas figuras
+python -m pytest tests/e2e                           # suíte completa
+docker exec rd-nginx date                             # conferir o fuso dentro de um container
+```
+
+**Verificação do fuso:** nginx, postgres, monitor, loadgen e mailpit mostraram `-03` nos relógios internos; o Postgres respondeu `America/Sao_Paulo` para `timezone` e `log_timezone`; o Mailpit passou a registrar `...-03:00`; o e-mail trouxe "18:13:17 (horário de Brasília)" quando o relógio da máquina marcava 18:13.
+
+**Opcional: imagens atualizadas (antes x depois).** Contagem de CVEs do Trivy (mesmo banco de vulnerabilidades, mesma versão do Trivy):
+
+| Serviço | Imagem antes | CRITICAL | HIGH | MEDIUM | LOW | Total | Imagem depois | CRITICAL | HIGH | MEDIUM | LOW | Total |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| web | nginx:1.27-alpine | 3 | 67 | 103 | 46 | 219 | nginx:stable-alpine3.23 | 1 | 52 | 64 | 71 | 190 |
+| db | postgres:16 | 2 | 154 | 210 | 172 | 564 | postgres:17-alpine | 1 | 26 | 37 | 7 | 72 |
+| dns | coredns/coredns:1.11.3 | 2 | 55 | 67 | 5 | 136 | coredns/coredns:1.13.1 | 2 | 66 | 50 | 3 | 126 |
+| smtp | axllent/mailpit:v1.21 | 3 | 79 | 118 | 41 | 243 | axllent/mailpit:v1.28 | 3 | 69 | 69 | 34 | 177 |
+| **Total** | | **10** | **355** | **498** | **264** | **1162** | | **7** | **213** | **220** | **115** | **565** |
+
+(A coluna Total também conta achados de severidade desconhecida, por isso ela é um pouco maior que a soma das quatro severidades.)
+
+Resultado: **menos 51% de CVEs no total** (1162 para 565), menos 30% de CRITICAL (10 para 7) e menos 40% de HIGH. O maior ganho foi o banco (564 para 72), por trocar Debian por Alpine. O CoreDNS ficou praticamente igual porque a maioria dos achados vem da biblioteca padrão do Go com a qual o binário foi compilado. A mudança foi mesclada após a suíte E2E passar com as imagens novas. Observações: (a) o `nginx:1.28-alpine` foi testado primeiro e **piorou** (287 CVEs, 8 CRITICAL), por isso foi trocado; (b) o volume de dados do Postgres precisou ser recriado, pois a versão 17 não lê dados da 16 (passo documentado no `INSTALACAO.md`); (c) os números dependem do banco de vulnerabilidades do dia do scan.
+
+### 6. Perguntas que a professora pode fazer
+
+- **Por que o horário do e-mail estava 3 horas adiantado?** Os containers usavam UTC. O Brasil está em UTC-3. Configuramos `TZ=America/Sao_Paulo` e formatamos o horário explicitamente no código.
+- **Por que guardar o horário em UTC?** Para comparar eventos de sistemas diferentes e evitar problemas com horário de verão. A conversão é feita só na exibição.
+- **Como o e-mail carrega acentos se o SMTP é de 7 bits?** O assunto é codificado (RFC 2047) e o corpo declara UTF-8 com codificação de transferência; o cliente decodifica.
+- **O que é um runbook e o que é um playbook?** Runbook: guia operacional por serviço. Playbook: roteiro de resposta por tipo de incidente.
+- **Qual a diferença entre contenção e resolução?** Contenção reduz o dano rapidamente (bloquear um IP, isolar um serviço). Resolução corrige a causa (corrigir a configuração, aplicar o patch).
+- **Por que atualizar as imagens reduz as vulnerabilidades?** As versões novas trazem pacotes corrigidos, e a base Alpine tem menos pacotes que a Debian.
+- **Atualizar sempre é seguro?** Não: por isso rodamos a suíte de testes depois, e fixamos versões em vez de usar `latest`.
+- **O que é MTTD e MTTR?** Tempo médio para detectar e para recuperar um incidente.
+
+### 7. Problemas encontrados e como foram resolvidos
+
+1. **Diagrama `fig00_arquitetura.png` ausente.** O arquivo ainda não estava em `docs/img/` quando a documentação foi escrita. `README.md` e `ARQUITETURA.md` já o referenciam; basta copiar a imagem para `docs/img/fig00_arquitetura.png`. O `ARQUITETURA.md` também traz o diagrama em texto, então a explicação não depende da imagem.
+2. **Identificador renomeado por engano nos scripts.** Ao acentuar os scripts por substituição de texto, "nivel" virou "nível" também no nome da propriedade da API (`$s.nivel`) e de um parâmetro, o que quebraria os scripts. Foi desfeito e conferido com o analisador de sintaxe do PowerShell.
+3. **Script de figuras comparava horários como texto.** Depois de corrigir o fuso, o Mailpit passou a informar `-03:00` em vez de `Z`, e a comparação de texto deixou de achar o e-mail. Passou a comparar timestamps.
+4. **Testes que procuravam o assunto sem acento.** Três testes verificavam o assunto `Anomalia de trafego` e `configuracao`; falharam depois da correção dos acentos. Os testes foram ajustados (não era um defeito do sistema).
+5. **Picos passageiros logo após reiniciar o monitor.** Nos primeiros 1 a 2 minutos após o reinício, a latência p95 do Web e do DNS pode passar do limiar por causa de conexões frias e carga de reconstrução, abrindo incidentes amarelos que se resolvem sozinhos. Para o histórico das figuras ficar limpo, esperamos o sistema estabilizar e apagamos os incidentes resolvidos. O `preparar_apresentacao.ps1` faz o mesmo.
+6. **Imagem nova que piorou.** O `nginx:1.28-alpine` tinha mais CVEs que a 1.27. Trocado por `stable-alpine3.23`.
+7. **Banco de dados incompatível.** A troca para o Postgres 17 exigiu recriar o volume `pgdata` (documentado).
+8. **Gerador de tráfego caindo.** Na suíte final, o container `loadgen` morreu quando o Postgres foi parado (exceção `InternalClientError` do `asyncpg`, que não é um `PostgresError` e escapava do tratamento). Como as tarefas rodam juntas num `asyncio.gather`, uma exceção derruba todas. Correção: os laços do Postgres tratam qualquer exceção, e o compose passou a usar `restart: unless-stopped` para o `loadgen`. Resultado: 16 de 16 testes aprovados na execução final.
+9. **Banco de vulnerabilidades e limiar de alerta.** Com o `nginx:1.28-alpine`, o total de CRITICAL chegou a 14 (acima do limite 10 do vermelho). Com a imagem final são 7 (amarelo).

@@ -126,6 +126,7 @@ services:
   loadgen:
     build: ./loadgen
     container_name: rd-loadgen
+    restart: unless-stopped   # se o gerador cair, volta sozinho
     ports: ["8090:8090"]   # API de controle do modo (POST /mode/pico)
     environment:
       TZ: America/Sao_Paulo   # fuso horario: horarios iguais no painel, nos logs e nos e-mails

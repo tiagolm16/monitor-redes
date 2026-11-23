@@ -13,9 +13,20 @@ Os testes T10 a T17 **derrubam serviços, trocam o modo do gerador de tráfego e
 
 ## Resultado da execução final
 
-**16 casos executados, 16 aprovados, 0 falhas** (257,7 s, 23/11/2026).
+**16 casos executados, 16 aprovados, 0 falhas** (263,5 s, 23/11/2026, execução final da Fase 4, com as imagens atualizadas, o fuso `America/Sao_Paulo` e os textos acentuados). Os tempos por caso na tabela abaixo são os da última rodada da Fase 3, e variam alguns segundos de uma execução para outra.
 
-Histórico honesto até chegar aqui:
+### Rodadas da Fase 4
+
+| Rodada | Resultado | O que aconteceu |
+|---|---|---|
+| Branch `imagens-atualizadas` (1) | 13 aprovados, 3 falhas | T13 e T15 procuravam o assunto do e-mail sem acento (`trafego`, `configuracao`), que passou a ter acento (`tráfego`, `configuração`); T16 falhou em seguida. Os testes foram atualizados |
+| Branch `imagens-atualizadas` (2) | 3 de 3 reexecutados aprovados | T13, T15 e T16 com os assuntos corretos. Os outros 13 já tinham passado. Branch mesclada no `main` |
+| `main` após o merge (1) | 14 aprovados, 2 falhas, 8 erros no encerramento | O container do `loadgen` **morreu** durante o T10 (queda do Postgres) por uma exceção do `asyncpg` (`InternalClientError`) que o código não tratava; T13 e T14 não conseguiram trocar o modo (porta 8090 recusada) |
+| `main` após a correção (2, **final**) | **16 aprovados** | `loadgen` agora trata qualquer exceção nos laços do Postgres e tem `restart: unless-stopped`, voltando sozinho se cair |
+
+A suíte pegou um defeito real: um gerador de tráfego que cai quando o banco reinicia. Nas rodadas da Fase 3 isso não tinha aparecido por sorte de temporização.
+
+### Rodadas da Fase 3 (histórico)
 
 | Rodada | Resultado | O que aconteceu |
 |---|---|---|

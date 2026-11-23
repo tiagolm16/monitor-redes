@@ -96,7 +96,7 @@ async def brute_pg_worker():
             c = await asyncpg.connect(host="postgres", user=usuario, password=f"errada{random.randint(1, 99)}",
                                       database="appdb", timeout=3)
             await c.close()
-        except (asyncpg.PostgresError, OSError):
+        except Exception:
             pass
         await asyncio.sleep(0.4)
 
@@ -154,7 +154,9 @@ async def pg_loop(pausa):
                 else:                 # erro dentro de transacao -> ROLLBACK
                     async with c.transaction():
                         await c.execute("SELECT 1/0")
-        except (asyncpg.PostgresError, OSError):
+        except Exception:
+            # Qualquer falha (banco reiniciando, conexao do pool quebrada, InternalClientError do asyncpg...)
+            # nao pode derrubar o gerador de trafego inteiro: apenas tentamos de novo no proximo ciclo.
             pass
         await asyncio.sleep(random.expovariate(1 / pausa))
 
