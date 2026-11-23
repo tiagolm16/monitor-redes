@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from . import storage
+from .alerts import Motor
 from .collectors.dns_check import DnsCollector
 from .collectors.postgres import PostgresCollector
 from .collectors.smtp_check import SmtpCollector
@@ -21,6 +22,7 @@ log = logging.getLogger("monitor")
 INTERVALO = float(os.getenv("COLLECT_INTERVAL", "5"))
 SERVICOS = ["web", "db", "dns", "smtp"]
 estado = {"inicio": time.time(), "ultimo_ciclo": None}
+motor: Motor | None = None
 
 
 async def _coletar_um(coletor):
@@ -46,12 +48,18 @@ async def loop_coleta():
         ]
         await asyncio.to_thread(storage.insert_rows, ts, linhas)
         estado["ultimo_ciclo"] = ts
+        try:
+            await motor.avaliar()  # decide o nivel de cada regra com os dados recem gravados
+        except Exception:
+            log.exception("erro no motor de alertas")
         await asyncio.sleep(max(0.0, INTERVALO - (time.monotonic() - inicio)))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global motor
     storage.init()
+    motor = Motor(os.getenv("ALERTS_FILE", os.path.join(os.path.dirname(__file__), "..", "alerts.yaml")))
     tarefa = asyncio.create_task(loop_coleta())
     yield
     tarefa.cancel()
@@ -87,7 +95,14 @@ def health():
 def services():
     """Visao consolidada: para cada servico, estado (up/down) e ultimo valor de cada metrica."""
     agora = time.time()
-    saida = {s: {"service": s, "up": None, "ultima_leitura_ts": None, "metrics": {}} for s in SERVICOS}
+    niveis = motor.nivel_servicos()
+    ativos = storage.list_alerts(500, active=True)
+    saida = {
+        s: {"service": s, "up": None, "nivel": niveis.get(s, 1),
+            "alertas_ativos": sum(1 for a in ativos if a["service"] == s),
+            "ultima_leitura_ts": None, "metrics": {}}
+        for s in SERVICOS
+    }
     for linha in storage.latest(60):
         item = saida.get(linha["service"])
         if item is None:
@@ -116,8 +131,20 @@ def metrics(
 
 
 @app.get("/api/alerts")
-def alerts():
-    return storage.list_alerts()
+def alerts(
+    service: str | None = None,
+    level: int | None = Query(None, ge=2, le=3, description="pior nivel do incidente"),
+    active: bool | None = None,
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Historico de incidentes (mais recentes primeiro). active=true so os ainda abertos."""
+    return storage.list_alerts(limit, service, level, active)
+
+
+@app.get("/api/alert-rules")
+def alert_rules():
+    """Regras do alerts.yaml com o nivel e o ultimo valor avaliado de cada uma."""
+    return motor.listar_regras()
 
 
 # Front-end estatico (precisa vir por ultimo, senao "/" engole as rotas /api)

@@ -32,16 +32,26 @@ def init() -> None:
                )"""
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_metrics ON metrics (service, metric, ts)")
-        # Tabela de alertas: sera preenchida na fase de alertas
+        # Tabela de alertas: 1 linha por INCIDENTE (abertura, mudancas de nivel, resolucao).
+        # Esquema antigo (fase 1, vazio) e descartado.
+        cols = [r[1] for r in c.execute("PRAGMA table_info(alerts)")]
+        if cols and "opened_ts" not in cols:
+            c.execute("DROP TABLE alerts")
         c.execute(
             """CREATE TABLE IF NOT EXISTS alerts (
-                   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                   ts         REAL NOT NULL,
-                   service    TEXT NOT NULL,
-                   level      TEXT NOT NULL,
-                   rule       TEXT NOT NULL,
-                   message    TEXT NOT NULL,
-                   resolved_ts REAL
+                   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                   rule        TEXT NOT NULL,
+                   service     TEXT NOT NULL,
+                   metric      TEXT NOT NULL,
+                   level       INTEGER NOT NULL,   -- nivel atual (2 amarelo, 3 vermelho)
+                   max_level   INTEGER NOT NULL,   -- pior nivel atingido no incidente
+                   opened_ts   REAL NOT NULL,
+                   updated_ts  REAL NOT NULL,
+                   resolved_ts REAL,               -- NULL = incidente ainda ativo
+                   value       REAL,
+                   threshold   REAL,
+                   message     TEXT NOT NULL,
+                   events      TEXT NOT NULL       -- JSON: [{ts, level, value}, ...]
                )"""
         )
 
@@ -93,10 +103,68 @@ def latest(janela_s: int = 60) -> list[dict]:
         return [_linha(r) for r in c.execute(sql, (time.time() - janela_s,))]
 
 
-def list_alerts(limit: int = 100) -> list[dict]:
+def values(service: str, metric: str, since_ts: float) -> list[float]:
+    """Valores de uma metrica (sem labels) desde since_ts, em ordem cronologica."""
     with _conn() as c:
-        rows = c.execute("SELECT * FROM alerts ORDER BY ts DESC LIMIT ?", (limit,))
-        return [dict(r) for r in rows]
+        rows = c.execute(
+            "SELECT value FROM metrics WHERE service=? AND metric=? AND labels='' AND ts>=? ORDER BY ts",
+            (service, metric, since_ts),
+        )
+        return [r[0] for r in rows]
+
+
+def first_value(service: str, metric: str, since_ts: float):
+    """Leitura mais antiga desde since_ts: (ts, valor) ou None."""
+    with _conn() as c:
+        r = c.execute(
+            "SELECT ts, value FROM metrics WHERE service=? AND metric=? AND ts>=? ORDER BY ts LIMIT 1",
+            (service, metric, since_ts),
+        ).fetchone()
+        return (r[0], r[1]) if r else None
+
+
+# ---- Alertas ----
+def alert_open(rule, service, metric, level, ts, value, threshold, message) -> int:
+    ev = json.dumps([{"ts": ts, "level": level, "value": value}])
+    with _conn() as c:
+        cur = c.execute(
+            """INSERT INTO alerts (rule, service, metric, level, max_level, opened_ts, updated_ts,
+                                   value, threshold, message, events)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (rule, service, metric, level, level, ts, ts, value, threshold, message, ev),
+        )
+        return cur.lastrowid
+
+
+def alert_update(alert_id, level, ts, value, threshold, message, resolved: bool = False) -> None:
+    with _conn() as c:
+        row = c.execute("SELECT max_level, events FROM alerts WHERE id=?", (alert_id,)).fetchone()
+        eventos = json.loads(row["events"]) + [{"ts": ts, "level": level, "value": value}]
+        c.execute(
+            """UPDATE alerts SET level=?, max_level=?, updated_ts=?, value=?, threshold=?, message=?,
+                                 resolved_ts=?, events=? WHERE id=?""",
+            (level, max(level, row["max_level"]), ts, value, threshold, message,
+             ts if resolved else None, json.dumps(eventos), alert_id),
+        )
+
+
+def list_alerts(limit=100, service=None, level=None, active=None) -> list[dict]:
+    sql, args = "SELECT * FROM alerts WHERE 1=1", []
+    if service:
+        sql += " AND service=?"; args.append(service)
+    if level:
+        sql += " AND max_level=?"; args.append(level)
+    if active is not None:
+        sql += " AND resolved_ts IS NULL" if active else " AND resolved_ts IS NOT NULL"
+    sql += " ORDER BY opened_ts DESC LIMIT ?"
+    args.append(limit)
+    with _conn() as c:
+        out = []
+        for r in c.execute(sql, args):
+            d = dict(r)
+            d["events"] = json.loads(d["events"])
+            out.append(d)
+        return out
 
 
 def count_rows() -> int:

@@ -1,0 +1,162 @@
+# Regras de alerta. Cada ciclo de coleta dura 5 s.
+#
+# Como o nivel e decidido (a cada ciclo):
+#   - vermelho se o valor ultrapassa o limiar "vermelho"      (nivel 3, critico)
+#   - amarelo  se ultrapassa o limiar "amarelo"                (nivel 2, atencao)
+#   - verde    caso contrario                                  (nivel 1, ok)
+# "operador" diz o que e RUIM: ">" (valor alto e ruim) ou "<" (valor baixo e ruim).
+#
+# Anti-spam (histerese): o novo nivel so vira oficial depois de "ciclos" leituras seguidas
+# (para piorar) ou "ciclos_recuperacao" leituras seguidas (para melhorar).
+#
+# "agregacao": como transformar o historico recente em UM numero para comparar:
+#   ultimo (padrao) | media | max | soma | p95   sobre os ultimos "janela_s" segundos.
+
+regras:
+  # ---------- Web ----------
+  - id: web_disponibilidade
+    servico: web
+    metrica: up
+    descricao: Web fora do ar (HTTP check)
+    operador: "<"
+    vermelho: 1            # up = 0 -> vermelho. Sem amarelo: ou esta no ar, ou nao esta.
+    ciclos: 2
+    ciclos_recuperacao: 3
+  - id: web_latencia_p95
+    servico: web
+    metrica: latency_ms
+    descricao: Latencia HTTP p95 (1 min)
+    operador: ">"
+    amarelo: 300
+    vermelho: 1000
+    agregacao: p95
+    janela_s: 60
+    unidade: ms
+    ciclos: 3
+    ciclos_recuperacao: 3
+  - id: web_erros_5xx
+    servico: web
+    metrica: error_rate_5xx
+    descricao: Taxa de erro 5xx (30 s)
+    operador: ">"
+    amarelo: 5
+    vermelho: 15
+    unidade: "%"
+    ciclos: 3
+    ciclos_recuperacao: 3
+
+  # ---------- Banco de dados ----------
+  - id: db_disponibilidade
+    servico: db
+    metrica: up
+    descricao: PostgreSQL fora do ar
+    operador: "<"
+    vermelho: 1
+    ciclos: 2
+    ciclos_recuperacao: 3
+  - id: db_conexoes
+    servico: db
+    metrica: connections_percent
+    descricao: Conexoes em uso (% do max_connections)
+    operador: ">"
+    amarelo: 70
+    vermelho: 90
+    unidade: "%"
+    ciclos: 3
+    ciclos_recuperacao: 3
+  - id: db_slow_queries
+    servico: db
+    metrica: slow_queries
+    descricao: Slow queries (queries/min acima de 200 ms)
+    operador: ">"
+    amarelo: 8
+    vermelho: 20
+    agregacao: soma
+    janela_s: 60
+    ciclos: 3
+    ciclos_recuperacao: 3
+  - id: db_rollbacks
+    servico: db
+    metrica: rollbacks_per_s
+    descricao: Rollbacks por segundo (media 1 min)
+    operador: ">"
+    amarelo: 0.5
+    vermelho: 2
+    agregacao: media
+    janela_s: 60
+    unidade: /s
+    ciclos: 3
+    ciclos_recuperacao: 3
+
+  # ---------- DNS ----------
+  - id: dns_disponibilidade
+    servico: dns
+    metrica: up
+    descricao: DNS nao responde
+    operador: "<"
+    vermelho: 1
+    ciclos: 2
+    ciclos_recuperacao: 3
+  - id: dns_latencia_p95
+    servico: dns
+    metrica: resolve_ms
+    descricao: Tempo de resolucao DNS p95 (1 min)
+    operador: ">"
+    amarelo: 100
+    vermelho: 500
+    agregacao: p95
+    janela_s: 60
+    unidade: ms
+    ciclos: 3
+    ciclos_recuperacao: 3
+  - id: dns_falhas
+    servico: dns
+    metrica: failure_rate
+    descricao: Falhas do servidor DNS (SERVFAIL, REFUSED, timeout; NXDOMAIN nao conta)
+    operador: ">"
+    amarelo: 2
+    vermelho: 10
+    unidade: "%"
+    ciclos: 3
+    ciclos_recuperacao: 3
+
+  # ---------- SMTP ----------
+  - id: smtp_disponibilidade
+    servico: smtp
+    metrica: up
+    descricao: SMTP fora do ar
+    operador: "<"
+    vermelho: 1
+    ciclos: 2
+    ciclos_recuperacao: 3
+  - id: smtp_entrega
+    servico: smtp
+    metrica: delivery_rate
+    descricao: Taxa de entrega de e-mails (1 min)
+    operador: "<"
+    amarelo: 95
+    vermelho: 80
+    unidade: "%"
+    ciclos: 3
+    ciclos_recuperacao: 3
+  - id: smtp_fila
+    servico: smtp
+    metrica: queue_size
+    descricao: Fila de envio
+    operador: ">"
+    amarelo: 5
+    vermelho: 20
+    ciclos: 3
+    ciclos_recuperacao: 3
+  - id: smtp_latencia
+    servico: smtp
+    metrica: send_latency_ms
+    descricao: Latencia de envio SMTP (media 1 min)
+    operador: ">"
+    amarelo: 500
+    vermelho: 2000
+    agregacao: media
+    janela_s: 60
+    unidade: ms
+    ciclos: 3
+    ciclos_recuperacao: 3

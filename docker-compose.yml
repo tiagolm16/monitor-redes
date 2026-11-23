@@ -85,8 +85,17 @@ services:
       PG_CONTAINER: rd-postgres
       DNS_SERVER: 172.28.77.12
       DNS_METRICS_URL: http://coredns:9153/metrics
-      SMTP_HOST: mailpit
+      MAILPIT_HOST: mailpit              # sondas SMTP sempre vao para o Mailpit
       MAILPIT_API: http://mailpit:8025
+      # Envio de ALERTAS: Mailpit por padrao; defina no arquivo .env para usar um SMTP real
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_TLS: ${SMTP_TLS:-none}        # none | starttls | ssl
+      ALERT_TO: ${ALERT_TO:-ops@lab.local}
+      ALERT_FROM: ${ALERT_FROM:-alertas@lab.local}
+      DASHBOARD_URL: ${DASHBOARD_URL:-http://localhost:8000}
     volumes:
       - monitor-data:/data
       - nginx-logs:/var/log/nginx-json:ro
