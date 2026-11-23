@@ -18,7 +18,8 @@ import httpx
 
 from ..util import Taxas
 
-SMTP_HOST = os.getenv("SMTP_HOST", "mailpit")
+# Sondas SEMPRE vao para o Mailpit (SMTP_HOST/SMTP_PORT ficam livres para o envio de alertas)
+SMTP_HOST = os.getenv("MAILPIT_HOST", "mailpit")
 SMTP_PORT = 1025
 MAILPIT_API = os.getenv("MAILPIT_API", "http://mailpit:8025")
 JANELA_S = 60  # taxas de entrega/erro sao calculadas sobre o ultimo minuto

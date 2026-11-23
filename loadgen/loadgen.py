@@ -26,9 +26,9 @@ PERFIS = {
 
 
 async def http_loop(pausa):
-    # (caminho, peso): 85% sucesso, 10% 404, 3% 500, 2% /admin sem senha (401)
-    caminhos = [("/", 50), ("/index.html", 20), ("/sobre.html", 15),
-                ("/nao-existe", 10), ("/erro500", 3), ("/admin", 2)]
+    # (caminho, peso em %): ~94% sucesso, 4% 404, 0,6% 500, 0,4% /admin sem senha (401)
+    caminhos = [("/", 50), ("/index.html", 25), ("/sobre.html", 19),
+                ("/nao-existe", 4), ("/erro500", 0.6), ("/admin", 0.4)]
     rotas, pesos = zip(*caminhos)
     async with httpx.AsyncClient(timeout=5) as client:
         while True:
@@ -58,7 +58,7 @@ async def pg_loop(pausa):
                                     f"cliente{random.randint(0, 49)}", round(random.uniform(5, 500), 2))
                 elif sorteio < 0.95:  # agregacao
                     await c.fetch("SELECT cliente, SUM(valor) FROM pedidos GROUP BY cliente")
-                elif sorteio < 0.98:  # query LENTA (acima de 200 ms) de proposito
+                elif sorteio < 0.965:  # query LENTA (acima de 200 ms) de proposito, ~1,5%
                     await c.execute("SELECT pg_sleep(0.35)")
                 else:                 # erro dentro de transacao -> ROLLBACK
                     async with c.transaction():
@@ -74,8 +74,8 @@ async def dns_loop(pausa):
     r.lifetime = 2
     validos = ["web.lab.local", "db.lab.local", "mail.lab.local", "www.lab.local", "ns1.lab.local"]
     while True:
-        # 85% nomes que existem; 15% nomes inexistentes (resposta NXDOMAIN)
-        nome = random.choice(validos) if random.random() < 0.85 else f"nada{random.randint(1, 999)}.lab.local"
+        # 96% nomes que existem; 4% inexistentes (resposta NXDOMAIN)
+        nome = random.choice(validos) if random.random() < 0.96 else f"nada{random.randint(1, 999)}.lab.local"
         try:
             await r.resolve(nome, "A")
         except dns.exception.DNSException:

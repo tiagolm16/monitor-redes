@@ -12,7 +12,7 @@ import time
 
 import httpx
 
-from ..util import Taxas
+from ..util import Janela, Taxas
 
 WEB_URL = os.getenv("WEB_URL", "http://nginx")
 NGINX_LOG = os.getenv("NGINX_LOG", "/var/log/nginx-json/access.log")
@@ -30,6 +30,7 @@ class WebCollector:
         self.taxas = Taxas()
         self.log_pos: int | None = None  # ate onde ja lemos o arquivo de log
         self.codigos_vistos: set[str] = set()
+        self.janela = Janela(30)  # taxas de erro calculadas sobre os ultimos 30 s
 
     async def collect(self):
         linhas = []
@@ -76,14 +77,13 @@ class WebCollector:
             f.seek(self.log_pos)
             dados = f.read(5_000_000)
         fim = dados.rfind(b"\n")  # ignora linha incompleta no final
-        if fim < 0:
-            return []  # (sem linhas novas: nao emite nada neste ciclo)
-        self.log_pos += fim + 1
+        if fim >= 0:
+            self.log_pos += fim + 1  # sem linhas novas: ciclo com contagem zero (mantem a janela andando)
 
         por_codigo: dict[str, int] = {}
         soma_tempo = 0.0
         total = 0
-        for linha in dados[: fim + 1].splitlines():
+        for linha in (dados[: fim + 1].splitlines() if fim >= 0 else []):
             try:
                 reg = json.loads(linha)
             except ValueError:
@@ -100,8 +100,10 @@ class WebCollector:
                  for c in sorted(self.codigos_vistos)]
         erros_4xx = sum(n for c, n in por_codigo.items() if c.startswith("4"))
         erros_5xx = sum(n for c, n in por_codigo.items() if c.startswith("5"))
-        saida.append(("error_rate_4xx", 100 * erros_4xx / total if total else 0, None))
-        saida.append(("error_rate_5xx", 100 * erros_5xx / total if total else 0, None))
+        self.janela.add(total=total, e4=erros_4xx, e5=erros_5xx)
+        t = self.janela.soma("total")
+        saida.append(("error_rate_4xx", 100 * self.janela.soma("e4") / t if t else 0, None))
+        saida.append(("error_rate_5xx", 100 * self.janela.soma("e5") / t if t else 0, None))
         if total:
             saida.append(("log_latency_ms", 1000 * soma_tempo / total, None))
         return saida

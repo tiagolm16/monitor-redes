@@ -1,6 +1,7 @@
 """Funcoes de apoio usadas pelos coletores."""
 import re
 import time
+from collections import deque
 
 
 class Taxas:
@@ -50,3 +51,24 @@ def parse_prometheus(texto: str) -> list[tuple[str, dict, float]]:
         labels = dict(_LABEL.findall(m.group(3) or ""))
         saida.append((m.group(1), labels, valor))
     return saida
+
+
+class Janela:
+    """Soma valores dos ultimos N segundos (janela deslizante).
+
+    Taxas de erro calculadas so com o ultimo ciclo de 5 s oscilam muito (1 erro em 25
+    requisicoes = 4%). Somando uma janela maior (ex.: 30 s) a taxa fica estavel.
+    """
+
+    def __init__(self, segundos: float) -> None:
+        self.segundos = segundos
+        self.itens: deque[tuple[float, dict]] = deque()
+
+    def add(self, **valores: float) -> None:
+        agora = time.monotonic()
+        self.itens.append((agora, valores))
+        while self.itens and agora - self.itens[0][0] > self.segundos:
+            self.itens.popleft()
+
+    def soma(self, chave: str) -> float:
+        return sum(v.get(chave, 0) for _, v in self.itens)

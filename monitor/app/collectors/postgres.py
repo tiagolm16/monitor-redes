@@ -6,11 +6,11 @@ Le views internas do Postgres e, se o docker.sock estiver montado, CPU/memoria d
 import asyncio
 import os
 import time
-from collections import deque
 
 import asyncpg
 import httpx
 
+from .. import storage
 from ..util import Taxas
 
 PG_HOST = os.getenv("PG_HOST", "postgres")
@@ -26,7 +26,6 @@ class PostgresCollector:
 
     def __init__(self) -> None:
         self.taxas = Taxas()
-        self.tamanhos: deque[tuple[float, float]] = deque(maxlen=720)  # ~1 h de leituras
         self.docker = httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds="/var/run/docker.sock"), timeout=3.5
         )
@@ -92,14 +91,16 @@ class PostgresCollector:
 
         linhas.append(("connections", conexoes, None))
         linhas.append(("connections_max", max_conn, None))
+        linhas.append(("connections_percent", 100 * conexoes / max_conn, None))
         linhas.append(("db_size_bytes", st["tamanho"], None))
 
-        # Crescimento: variacao do tamanho em relacao a leitura mais antiga guardada, em bytes/min
-        agora = time.monotonic()
-        self.tamanhos.append((agora, st["tamanho"]))
-        t0, s0 = self.tamanhos[0]
-        if agora - t0 >= 10:
-            linhas.append(("db_growth_bytes_per_min", (st["tamanho"] - s0) / (agora - t0) * 60, None))
+        # Crescimento: compara o tamanho atual com a leitura mais antiga dos ultimos 15 min
+        # guardada no proprio SQLite (o historico ja esta la, nao precisa de memoria extra).
+        antigo = await asyncio.to_thread(storage.first_value, "db", "db_size_bytes", time.time() - 900)
+        if antigo and time.time() - antigo[0] >= 60:
+            mb_por_hora = (st["tamanho"] - antigo[1]) / (time.time() - antigo[0]) * 3600 / 1e6
+            linhas.append(("db_growth_mb_per_h", mb_por_hora, None))
+            linhas.append(("db_growth_gb_per_day", mb_por_hora * 24 / 1024, None))  # projecao linear
         return linhas
 
     async def _container(self):
