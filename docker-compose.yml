@@ -18,6 +18,8 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: rd-nginx
+    environment:
+      TZ: America/Sao_Paulo
     ports: ["8081:80"]          # 8081 no host para nao brigar com nada que use a 80
     volumes:
       - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -32,6 +34,7 @@ services:
     container_name: rd-postgres
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
+      TZ: America/Sao_Paulo   # fuso horario: horarios iguais no painel, nos logs e nos e-mails
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app123      # senha de laboratorio
       POSTGRES_DB: appdb
@@ -51,6 +54,8 @@ services:
   coredns:
     image: coredns/coredns:1.11.3
     container_name: rd-coredns
+    environment:
+      TZ: America/Sao_Paulo
     command: ["-conf", "/etc/coredns/Corefile"]
     ports:
       - "1053:53/udp"   # DNS usa UDP 53 (host 1053, a 53 do Windows costuma estar ocupada)
@@ -64,6 +69,8 @@ services:
   mailpit:
     image: axllent/mailpit:v1.21
     container_name: rd-mailpit
+    environment:
+      TZ: America/Sao_Paulo
     env_file: ./services/mailpit/mailpit.env
     ports:
       - "1025:1025"     # SMTP
@@ -76,6 +83,7 @@ services:
     container_name: rd-monitor
     ports: ["8000:8000"]
     environment:
+      TZ: America/Sao_Paulo   # fuso horario: horarios iguais no painel, nos logs e nos e-mails
       COLLECT_INTERVAL: "5"
       DB_PATH: /data/metrics.db
       WEB_URL: http://nginx
@@ -120,6 +128,7 @@ services:
     container_name: rd-loadgen
     ports: ["8090:8090"]   # API de controle do modo (POST /mode/pico)
     environment:
+      TZ: America/Sao_Paulo   # fuso horario: horarios iguais no painel, nos logs e nos e-mails
       LOAD_MODE: ${LOAD_MODE:-normal}   # normal | pico | bruteforce
       WEB_URL: http://nginx
       PG_DSN: postgresql://app:app123@postgres:5432/appdb
@@ -141,6 +150,7 @@ services:
     profiles: ["scan"]
     entrypoint: ["/bin/sh", "/scan.sh"]
     environment:
+      TZ: America/Sao_Paulo   # fuso horario: horarios iguais no painel, nos logs e nos e-mails
       # O espelho da AWS (ECR) evita o limite de downloads do ghcr.io
       TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
       TRIVY_NO_PROGRESS: "true"

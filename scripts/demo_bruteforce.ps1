@@ -7,10 +7,10 @@ $inicio = Get-Date
 try {
     Definir-Modo "bruteforce"
     $t = Esperar-Alerta "sec_bruteforce*" 90
-    if ($null -ne $t) { Escrever "ALERTA de brute force apos $t s." "Red" } else { Escrever "Nenhum alerta em 90 s." "Red" }
+    if ($null -ne $t) { Escrever "ALERTA de brute force após $t s." "Red" } else { Escrever "Nenhum alerta em 90 s." "Red" }
     Start-Sleep -Seconds 8
     $b = (Obter "/api/security").brute
-    Escrever "IPs com falhas de login nos ultimos $($b.janela_s) s:"
+    Escrever "IPs com falhas de login nos últimos $($b.janela_s) s:"
     $b.ips | Select-Object -First 5 | ForEach-Object {
         Write-Host ("   {0,-16} {1,4} falhas  fonte: {2}" -f $_.ip, $_.falhas, ($_.fontes -join ", "))
     }
@@ -25,6 +25,6 @@ finally {
     Definir-Modo "normal"
 }
 $t = Esperar-Resolvido "sec_bruteforce*" 150
-if ($null -ne $t) { Escrever "Alerta RESOLVIDO $t s depois de voltar ao normal." "Green" } else { Escrever "O alerta nao resolveu em 150 s." "Red" }
+if ($null -ne $t) { Escrever "Alerta RESOLVIDO $t s depois de voltar ao normal." "Green" } else { Escrever "O alerta não resolveu em 150 s." "Red" }
 Mostrar-Emails 2
 Escrever "=== FIM ===" "White"

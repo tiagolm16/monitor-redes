@@ -8,6 +8,7 @@ const ROTA = { security: "seguranca" };
 const NOMES = { security: "Segurança", web: "Web Server (nginx)", db: "Banco de Dados (PostgreSQL)", dns: "DNS (CoreDNS)", smtp: "SMTP (Mailpit)" };
 const CORES = ["#38bdf8", "#f97316", "#a78bfa", "#22c55e", "#f43f5e"];
 const INTERVALO_MS = 5000;
+const AGREGACAO = { ultimo: "último", media: "média", max: "máximo", soma: "soma", p95: "p95" };
 
 // Metricas principais no card da Visao Geral: [metrica, rotulo, unidade, casas decimais]
 const RESUMO = {
@@ -60,8 +61,9 @@ const GRAFICOS = {
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const hora = (ts) => new Date(ts * 1000).toLocaleTimeString("pt-BR");
-const dataHora = (ts) => new Date(ts * 1000).toLocaleString("pt-BR");
+const FUSO = "America/Sao_Paulo";   // mesmo fuso dos e-mails
+const hora = (ts) => new Date(ts * 1000).toLocaleTimeString("pt-BR", { timeZone: FUSO });
+const dataHora = (ts) => new Date(ts * 1000).toLocaleString("pt-BR", { timeZone: FUSO });
 const num = (v, d) => (v === undefined || v === null ? "-" : Number(v).toFixed(d));
 const selo = (n, txt) => `<span class="selo n${n}">${esc(txt || NIVEL[n])}</span>`;
 
@@ -90,7 +92,7 @@ let ultimoOk = null;
 function marcarOk(health) {
   ultimoOk = Date.now();
   $("ponto").classList.remove("erro");
-  $("atualizacao").textContent = "Última atualização: " + new Date().toLocaleTimeString("pt-BR");
+  $("atualizacao").textContent = "Última atualização: " + new Date().toLocaleTimeString("pt-BR", { timeZone: FUSO });
   const aviso = $("aviso");
   if (health.status !== "ok") {
     aviso.textContent = "A API responde, mas a coleta de métricas está atrasada.";
@@ -283,7 +285,7 @@ function paginaAlertas() {
       desenhar();
       $("regras").innerHTML = `<table><tr><th>Nível</th><th>Serviço</th><th>Regra</th><th>Métrica</th><th>Agregação</th><th>Amarelo</th><th>Vermelho</th><th>Ciclos (piora/melhora)</th><th>Valor</th></tr>
         ${regras.map((r) => `<tr><td>${selo(r.nivel)}</td><td>${r.servico}</td><td>${esc(r.descricao)}</td><td>${r.metrica}</td>
-          <td>${r.agregacao}${r.agregacao === "ultimo" ? "" : " " + r.janela_s + "s"}</td>
+          <td>${AGREGACAO[r.agregacao] || r.agregacao}${r.agregacao === "ultimo" ? "" : " " + r.janela_s + "s"}</td>
           <td>${r.amarelo === null ? "-" : r.operador + " " + r.amarelo}</td><td>${r.vermelho === null ? "-" : r.operador + " " + r.vermelho}</td>
           <td>${r.ciclos} / ${r.ciclos_recuperacao}</td><td>${num(r.valor, 2)}${esc(r.unidade)}</td></tr>`).join("")}</table>`;
     },

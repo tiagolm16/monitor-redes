@@ -9,7 +9,9 @@ import math
 import os
 import statistics
 import time
+from datetime import datetime
 from email.message import EmailMessage
+from zoneinfo import ZoneInfo
 
 import aiosmtplib
 import yaml
@@ -18,6 +20,7 @@ from . import storage
 
 log = logging.getLogger("alertas")
 NOMES = {1: "Verde", 2: "Amarelo", 3: "Vermelho"}
+AGREGACAO = {"ultimo": "último", "media": "média", "max": "máximo", "soma": "soma", "p95": "p95"}  # nomes para exibir
 CORES = {1: "#16a34a", 2: "#ca8a04", 3: "#dc2626"}
 
 # --- Envio de e-mail: por padrao Mailpit (SMTP sem TLS na 1025). Para um SMTP real, defina as
@@ -30,6 +33,7 @@ SMTP_TLS = os.getenv("SMTP_TLS", "none").lower()  # none | starttls | ssl
 ALERT_TO = os.getenv("ALERT_TO", "ops@lab.local")
 ALERT_FROM = os.getenv("ALERT_FROM", "alertas@lab.local")
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8000")
+FUSO = ZoneInfo(os.getenv("TZ", "America/Sao_Paulo"))  # horario dos e-mails = horario do painel
 
 
 class Regra:
@@ -153,7 +157,7 @@ class Motor:
     # ---------------- e-mail ----------------
     async def _enviar_email(self, r: Regra, antigo, novo, valor, limiar, ts, inicio):
         if novo == 1:
-            tag, titulo = "[RECUPERADO]", "Servico recuperado"
+            tag, titulo = "[RECUPERADO]", "Serviço recuperado"
         elif novo == 3:
             tag, titulo = "[CRÍTICO]", "Alerta crítico"
         else:
@@ -161,9 +165,9 @@ class Motor:
         msg = EmailMessage()
         msg["From"], msg["To"] = ALERT_FROM, ALERT_TO
         msg["Subject"] = f"{tag} {r.servico}: {r.descricao}"
-        hora = time.strftime("%d/%m/%Y %H:%M:%S", time.localtime(ts))
+        hora = datetime.fromtimestamp(ts, FUSO).strftime("%d/%m/%Y %H:%M:%S") + " (horário de Brasília)"
         linhas = [
-            ("Serviço", r.servico), ("Métrica", f"{r.metrica} ({r.agregacao})"),
+            ("Serviço", r.servico), ("Métrica", f"{r.metrica} ({AGREGACAO.get(r.agregacao, r.agregacao)})"),
             ("Valor atual", fmt(valor, r.unidade)), ("Limiar", f"{r.operador} {fmt(limiar, r.unidade)}"),
             ("Horário", hora),
         ]

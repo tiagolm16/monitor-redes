@@ -20,6 +20,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 from conftest import (BASE, MAILPIT, NGINX_CONF, alerta_ativo, alerta_resolvido, api, assuntos_emails,  # noqa: E402
                       compose, esperar, graficos_com_dados, loadgen_modo)
 
+SELECAO = {a.replace(".png", "")[:5] for a in sys.argv[1:]}   # ex.: fig01 fig06 (vazio = todas)
 IMG = RAIZ / "docs" / "img"
 IMG.mkdir(parents=True, exist_ok=True)
 
@@ -42,7 +43,14 @@ LEGENDAS = {
 }
 
 
+def quer(*figuras):
+    """True se alguma das figuras foi pedida na linha de comando (ou se nenhuma foi: gera todas)."""
+    return not SELECAO or any(f in SELECAO for f in figuras)
+
+
 def salvar(page, nome, completa=True, clip=None):
+    if SELECAO and nome[:5] not in SELECAO:
+        return
     kwargs = {"path": str(IMG / f"{nome}.png")}
     if clip:
         # O cabecalho e "sticky": em prints de trecho da pagina ele apareceria no meio da imagem
@@ -77,8 +85,11 @@ def aguardar_verde(page):
 
 
 def abrir_email(page, prefixo, desde, nome):
+    """Abre no Mailpit o e-mail mais recente cujo assunto comeca com 'prefixo' (recebido depois de 'desde')."""
+    from datetime import datetime
     msgs = api_mailpit()
-    alvo = next(m for m in msgs if m["Subject"].startswith(prefixo) and m["Created"] >= desde)
+    criado = lambda m: datetime.fromisoformat(m["Created"].replace("Z", "+00:00")).timestamp()
+    alvo = next(m for m in msgs if m["Subject"].startswith(prefixo) and criado(m) >= desde - 2)
     page.goto(f"{MAILPIT}/view/{alvo['ID']}")
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2500)
@@ -102,92 +113,100 @@ def main():
             print("Aguardando o sistema ficar verde e com dados...")
             aguardar_verde(page)
 
-            print("Figuras 01 a 05 (operacao normal)")
-            salvar(page, "fig01_visao_geral_normal", completa=False)
-            for rota, nome in (("web", "fig02_web"), ("db", "fig03_banco"), ("dns", "fig04_dns"), ("smtp", "fig05_smtp")):
-                page.goto(f"{BASE}/#/{rota}")
-                graficos_com_dados(page, "main", 4)
+            if quer("fig01", "fig02", "fig03", "fig04", "fig05"):
+                print("Figuras 01 a 05 (operacao normal)")
+                salvar(page, "fig01_visao_geral_normal", completa=False)
+                for rota, nome in (("web", "fig02_web"), ("db", "fig03_banco"), ("dns", "fig04_dns"), ("smtp", "fig05_smtp")):
+                    page.goto(f"{BASE}/#/{rota}")
+                    graficos_com_dados(page, "main", 4)
+                    page.wait_for_timeout(1500)
+                    salvar(page, nome)
+
+            if quer("fig07", "fig08", "fig09"):
+                print("Figuras 07 a 09 (queda do postgres e e-mails)")
+                from datetime import datetime, timezone
+                inicio_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                t0 = time.time()
+                compose("stop", "postgres")
+                page.goto(BASE)
+                page.wait_for_selector("#card-db.nivel3", timeout=60000)
                 page.wait_for_timeout(1500)
-                salvar(page, nome)
+                salvar(page, "fig07_queda_postgres_vermelho", completa=False)
+                esperar(lambda: any(s.startswith("[CRÍTICO] db") for s in assuntos_emails(t0)), 30, descricao="e-mail critico")
+                abrir_email(page, "[CRÍTICO] db", t0, "fig08_email_critico_mailpit")
+                compose("start", "postgres")
+                page.goto(BASE)
+                page.wait_for_selector("#card-db.nivel1", timeout=120000)
+                esperar(lambda: any(s.startswith("[RECUPERADO] db") for s in assuntos_emails(t0)), 30, descricao="e-mail de recuperacao")
+                abrir_email(page, "[RECUPERADO] db", t0, "fig09_email_recuperado")
 
-            print("Figuras 07 a 09 (queda do postgres e e-mails)")
-            from datetime import datetime, timezone
-            inicio_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            t0 = time.time()
-            compose("stop", "postgres")
-            page.goto(BASE)
-            page.wait_for_selector("#card-db.nivel3", timeout=60000)
-            page.wait_for_timeout(1500)
-            salvar(page, "fig07_queda_postgres_vermelho", completa=False)
-            esperar(lambda: any(s.startswith("[CRÍTICO] db") for s in assuntos_emails(t0)), 30, descricao="e-mail critico")
-            abrir_email(page, "[CRÍTICO] db", inicio_iso[:19], "fig08_email_critico_mailpit")
-            compose("start", "postgres")
-            page.goto(BASE)
-            page.wait_for_selector("#card-db.nivel1", timeout=120000)
-            esperar(lambda: any(s.startswith("[RECUPERADO] db") for s in assuntos_emails(t0)), 30, descricao="e-mail de recuperacao")
-            abrir_email(page, "[RECUPERADO] db", inicio_iso[:19], "fig09_email_recuperado")
+            if quer("fig06"):
+                print("Figura 06 (historico de alertas)")
+                page.goto(f"{BASE}/#/alertas")
+                page.wait_for_selector("#historico table")
+                page.wait_for_timeout(1000)
+                salvar(page, "fig06_alertas_historico")
 
-            print("Figura 06 (historico de alertas)")
-            page.goto(f"{BASE}/#/alertas")
-            page.wait_for_selector("#historico table")
-            page.wait_for_timeout(1000)
-            salvar(page, "fig06_alertas_historico")
+            if quer("fig10"):
+                print("Figura 10 (DDoS)")
+                t0 = time.time()
+                loadgen_modo("pico")
+                esperar(lambda: alerta_ativo("sec_ddos", t0), 60, descricao="alerta DDoS")
+                page.wait_for_timeout(20000)       # deixa o grafico mostrar a subida do RPS
+                page.goto(f"{BASE}/#/seguranca")
+                graficos_com_dados(page, "main", 3)
+                page.wait_for_timeout(3000)
+                salvar(page, "fig10_ddos_zscore", clip=secao(page, "Alertas de segurança", "Brute force"))
+                loadgen_modo("normal")
+                esperar(lambda: alerta_resolvido("sec_ddos", t0), 150, descricao="DDoS resolvido")
 
-            print("Figura 10 (DDoS)")
-            t0 = time.time()
-            loadgen_modo("pico")
-            esperar(lambda: alerta_ativo("sec_ddos", t0), 60, descricao="alerta DDoS")
-            page.wait_for_timeout(20000)       # deixa o grafico mostrar a subida do RPS
-            page.goto(f"{BASE}/#/seguranca")
-            graficos_com_dados(page, "main", 3)
-            page.wait_for_timeout(3000)
-            salvar(page, "fig10_ddos_zscore", clip=secao(page, "Alertas de segurança", "Brute force"))
-            loadgen_modo("normal")
-            esperar(lambda: alerta_resolvido("sec_ddos", t0), 150, descricao="DDoS resolvido")
+            if quer("fig11"):
+                print("Figura 11 (brute force)")
+                t0 = time.time()
+                loadgen_modo("bruteforce")
+                esperar(lambda: alerta_ativo("sec_bruteforce", t0), 60, descricao="alerta brute force")
+                page.wait_for_timeout(25000)
+                page.goto(f"{BASE}/#/seguranca")
+                graficos_com_dados(page, "main", 3)
+                page.wait_for_timeout(3000)
+                salvar(page, "fig11_bruteforce_ips", clip=secao(page, "Brute force", "Alteração"))
+                loadgen_modo("normal")
+                esperar(lambda: alerta_resolvido("sec_bruteforce", t0), 150, descricao="brute force resolvido")
 
-            print("Figura 11 (brute force)")
-            t0 = time.time()
-            loadgen_modo("bruteforce")
-            esperar(lambda: alerta_ativo("sec_bruteforce", t0), 60, descricao="alerta brute force")
-            page.wait_for_timeout(25000)
-            page.goto(f"{BASE}/#/seguranca")
-            graficos_com_dados(page, "main", 3)
-            page.wait_for_timeout(3000)
-            salvar(page, "fig11_bruteforce_ips", clip=secao(page, "Brute force", "Alteração"))
-            loadgen_modo("normal")
-            esperar(lambda: alerta_resolvido("sec_bruteforce", t0), 150, descricao="brute force resolvido")
+            if quer("fig12"):
+                print("Figura 12 (configuracao alterada)")
+                t0 = time.time()
+                NGINX_CONF.write_bytes(original_nginx + b"\n# alteracao de demonstracao (nao autorizada)\n")
+                esperar(lambda: alerta_ativo("sec_config", t0), 30, descricao="alerta de config")
+                page.goto(f"{BASE}/#/seguranca")
+                page.wait_for_selector("#diffs pre.diff", timeout=15000)
+                page.wait_for_timeout(1500)
+                salvar(page, "fig12_config_alterada", clip=secao(page, "Alteração", "Vulnerabilidades"))
+                NGINX_CONF.write_bytes(original_nginx)
+                esperar(lambda: alerta_resolvido("sec_config", t0), 40, descricao="config resolvida")
 
-            print("Figura 12 (configuracao alterada)")
-            t0 = time.time()
-            NGINX_CONF.write_bytes(original_nginx + b"\n# alteracao de demonstracao (nao autorizada)\n")
-            esperar(lambda: alerta_ativo("sec_config", t0), 30, descricao="alerta de config")
-            page.goto(f"{BASE}/#/seguranca")
-            page.wait_for_selector("#diffs pre.diff", timeout=15000)
-            page.wait_for_timeout(1500)
-            salvar(page, "fig12_config_alterada", clip=secao(page, "Alteração", "Vulnerabilidades"))
-            NGINX_CONF.write_bytes(original_nginx)
-            esperar(lambda: alerta_resolvido("sec_config", t0), 40, descricao="config resolvida")
+            if quer("fig13"):
+                print("Figura 13 (vulnerabilidades)")
+                page.goto(f"{BASE}/#/seguranca")
+                page.wait_for_selector("#vulns .card", timeout=15000)
+                for resumo in page.locator("#vulns details summary").all():
+                    resumo.click()
+                page.wait_for_timeout(1000)
+                salvar(page, "fig13_vulnerabilidades", clip=secao(page, "Vulnerabilidades"))
 
-            print("Figura 13 (vulnerabilidades)")
-            page.goto(f"{BASE}/#/seguranca")
-            page.wait_for_selector("#vulns .card", timeout=15000)
-            for resumo in page.locator("#vulns details summary").all():
-                resumo.click()
-            page.wait_for_timeout(1000)
-            salvar(page, "fig13_vulnerabilidades", clip=secao(page, "Vulnerabilidades"))
-
-            print("Figuras 14 e 15 (celular)")
-            mctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
-                                       is_mobile=True, has_touch=True, locale="pt-BR")
-            m = mctx.new_page()
-            m.goto(BASE)
-            graficos_com_dados(m, "#cards", 5)
-            m.wait_for_timeout(1500)
-            salvar(m, "fig14_mobile_visao_geral")
-            m.click("#btn-menu")
-            m.wait_for_selector("#menu.aberto")
-            salvar(m, "fig15_mobile_menu", completa=False)
-            mctx.close()
+            if quer("fig14", "fig15"):
+                print("Figuras 14 e 15 (celular)")
+                mctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
+                                           is_mobile=True, has_touch=True, locale="pt-BR")
+                m = mctx.new_page()
+                m.goto(BASE)
+                graficos_com_dados(m, "#cards", 5)
+                m.wait_for_timeout(1500)
+                salvar(m, "fig14_mobile_visao_geral")
+                m.click("#btn-menu")
+                m.wait_for_selector("#menu.aberto")
+                salvar(m, "fig15_mobile_menu", completa=False)
+                mctx.close()
         finally:
             loadgen_modo("normal")
             compose("start", "nginx", "postgres", "coredns", "mailpit")
@@ -196,7 +215,8 @@ def main():
 
     corpo = "# Legendas das figuras\n\nUma linha por figura, para usar no artigo. Prints gerados por `scripts/capturar_prints.py`.\n\n"
     corpo += "\n".join(f"- **{nome}.png**: {txt}" for nome, txt in LEGENDAS.items()) + "\n"
-    (IMG / "LEGENDAS.md").write_text(corpo, encoding="utf-8")
+    if not SELECAO:
+        (IMG / "LEGENDAS.md").write_text(corpo, encoding="utf-8", newline="\n")
     print("docs/img/LEGENDAS.md gerado.")
 
 

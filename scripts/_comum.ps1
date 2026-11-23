@@ -2,9 +2,9 @@
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$Raiz = Split-Path -Parent $PSScriptRoot      # raiz do projeto (onde esta o docker-compose.yml)
+$Raiz = Split-Path -Parent $PSScriptRoot      # raiz do projeto (onde está o docker-compose.yml)
 $Api = "http://localhost:8000"                # API do monitor
-$Loadgen = "http://localhost:8090"            # API de controle do gerador de trafego
+$Loadgen = "http://localhost:8090"            # API de controle do gerador de tráfego
 $Mailpit = "http://localhost:8025"
 
 function Escrever([string]$msg, [string]$cor = "Cyan") {
@@ -23,7 +23,7 @@ function Obter([string]$caminho) {
 
 function Definir-Modo([string]$modo) {
     Invoke-RestMethod -Method Post -Uri "$Loadgen/mode/$modo" -TimeoutSec 8 | Out-Null
-    Escrever "Modo do gerador de trafego: $modo" "Yellow"
+    Escrever "Modo do gerador de tráfego: $modo" "Yellow"
 }
 
 function Mostrar-Status {
@@ -35,29 +35,29 @@ function Mostrar-Status {
     }
 }
 
-# Espera um alerta ATIVO cuja regra combine com o padrao (ex.: "sec_ddos*"). Retorna os segundos ou $null.
-function Esperar-Alerta([string]$padrao, [int]$limite = 120) {
+# Espera um alerta ATIVO cuja regra combine com o padrão (ex.: "sec_ddos*"). Retorna os segundos ou $null.
+function Esperar-Alerta([string]$padrão, [int]$limite = 120) {
     $t0 = Get-Date
     while (((Get-Date) - $t0).TotalSeconds -lt $limite) {
-        $achou = Obter "/api/alerts?active=true&limit=100" | Where-Object { $_.rule -like $padrao }
+        $achou = Obter "/api/alerts?active=true&limit=100" | Where-Object { $_.rule -like $padrão }
         if ($achou) { return [math]::Round(((Get-Date) - $t0).TotalSeconds, 1) }
         Start-Sleep -Seconds 1
     }
     return $null
 }
 
-# Espera nao haver mais alerta ativo para o padrao. Retorna os segundos ou $null.
-function Esperar-Resolvido([string]$padrao, [int]$limite = 150) {
+# Espera não haver mais alerta ativo para o padrão. Retorna os segundos ou $null.
+function Esperar-Resolvido([string]$padrão, [int]$limite = 150) {
     $t0 = Get-Date
     while (((Get-Date) - $t0).TotalSeconds -lt $limite) {
-        $achou = Obter "/api/alerts?active=true&limit=100" | Where-Object { $_.rule -like $padrao }
+        $achou = Obter "/api/alerts?active=true&limit=100" | Where-Object { $_.rule -like $padrão }
         if (-not $achou) { return [math]::Round(((Get-Date) - $t0).TotalSeconds, 1) }
         Start-Sleep -Seconds 1
     }
     return $null
 }
 
-# Espera o card de um servico atingir um nivel (1 verde, 2 amarelo, 3 vermelho).
+# Espera o card de um serviço atingir um nível (1 verde, 2 amarelo, 3 vermelho).
 function Esperar-Nivel([string]$servico, [int]$nivel, [int]$limite = 120) {
     $t0 = Get-Date
     while (((Get-Date) - $t0).TotalSeconds -lt $limite) {
@@ -68,7 +68,7 @@ function Esperar-Nivel([string]$servico, [int]$nivel, [int]$limite = 120) {
     return $null
 }
 
-# Assuntos dos e-mails de alerta mais recentes no Mailpit (so os que comecam com colchete).
+# Assuntos dos e-mails de alerta mais recentes no Mailpit (só os que começam com colchete).
 function Mostrar-Emails([int]$quantos = 4) {
     $msgs = (Ler-Json "$Mailpit/api/v1/messages?limit=60").messages |
         Where-Object { $_.Subject -like "[[]*" } | Select-Object -First $quantos
@@ -79,5 +79,5 @@ function Mostrar-Emails([int]$quantos = 4) {
 
 function Verificar-Ambiente {
     try { Obter "/api/health" | Out-Null }
-    catch { Write-Host "O monitor nao responde em $Api. Rode antes: docker compose up -d --build" -ForegroundColor Red; exit 1 }
+    catch { Write-Host "O monitor não responde em $Api. Rode antes: docker compose up -d --build" -ForegroundColor Red; exit 1 }
 }

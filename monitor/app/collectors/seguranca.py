@@ -281,12 +281,12 @@ class SegurancaCollector:
     def detalhe_alerta(self, regra_id: str) -> str:
         """Texto extra anexado ao e-mail do alerta (quem atacou, qual arquivo mudou...)."""
         if regra_id.startswith("sec_ddos"):
-            linhas = [f"  {t['ip']}: {t['requisicoes']} requisicoes nos ultimos 60 s" for t in self.estado["top_ips"]]
+            linhas = [f"  {t['ip']}: {t['requisicoes']} requisições nos últimos 60 s" for t in self.estado["top_ips"]]
             return "Top 5 IPs por volume:\n" + "\n".join(linhas)
         if regra_id == "sec_bruteforce_ip":
             linhas = [f"  {i['ip']}: {i['falhas']} falhas em {self.estado['brute']['janela_s']} s ({', '.join(i['fontes'])})"
                       for i in self.estado["brute"].get("ips", [])[:5]]
-            return "IPs com mais falhas de autenticacao:\n" + "\n".join(linhas)
+            return "IPs com mais falhas de autenticação:\n" + "\n".join(linhas)
         if regra_id == "sec_config":
             partes = []
             for a in self.estado["config"]:

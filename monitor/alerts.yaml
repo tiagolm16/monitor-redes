@@ -1,16 +1,16 @@
 # Regras de alerta. Cada ciclo de coleta dura 5 s.
 #
-# Como o nivel e decidido (a cada ciclo):
-#   - vermelho se o valor ultrapassa o limiar "vermelho"      (nivel 3, critico)
-#   - amarelo  se ultrapassa o limiar "amarelo"                (nivel 2, atencao)
-#   - verde    caso contrario                                  (nivel 1, ok)
-# "operador" diz o que e RUIM: ">" (valor alto e ruim) ou "<" (valor baixo e ruim).
+# Como o nível é decidido (a cada ciclo):
+#   - vermelho se o valor ultrapassa o limiar "vermelho"      (nível 3, crítico)
+#   - amarelo  se ultrapassa o limiar "amarelo"                (nível 2, atenção)
+#   - verde    caso contrário                                  (nível 1, ok)
+# "operador" diz o que é RUIM: ">" (valor alto e ruim) ou "<" (valor baixo e ruim).
 #
-# Anti-spam (histerese): o novo nivel so vira oficial depois de "ciclos" leituras seguidas
+# Anti-spam (histerese): o novo nível só vira oficial depois de "ciclos" leituras seguidas
 # (para piorar) ou "ciclos_recuperacao" leituras seguidas (para melhorar).
 #
-# "agregacao": como transformar o historico recente em UM numero para comparar:
-#   ultimo (padrao) | media | max | soma | p95   sobre os ultimos "janela_s" segundos.
+# "agregacao": como transformar o histórico recente em UM número para comparar:
+#   último (padrão) | média | max | soma | p95   sobre os últimos "janela_s" segundos.
 
 regras:
   # ---------- Web ----------
@@ -19,13 +19,13 @@ regras:
     metrica: up
     descricao: Web fora do ar (HTTP check)
     operador: "<"
-    vermelho: 1            # up = 0 -> vermelho. Sem amarelo: ou esta no ar, ou nao esta.
+    vermelho: 1            # up = 0 -> vermelho. Sem amarelo: ou está no ar, ou não está.
     ciclos: 2
     ciclos_recuperacao: 3
   - id: web_latencia_p95
     servico: web
     metrica: latency_ms
-    descricao: Latencia HTTP p95 (1 min)
+    descricao: Latência HTTP p95 (1 min)
     operador: ">"
     amarelo: 300
     vermelho: 1000
@@ -57,7 +57,7 @@ regras:
   - id: db_conexoes
     servico: db
     metrica: connections_percent
-    descricao: Conexoes em uso (% do max_connections)
+    descricao: Conexões em uso (% do max_connections)
     operador: ">"
     amarelo: 70
     vermelho: 90
@@ -78,7 +78,7 @@ regras:
   - id: db_rollbacks
     servico: db
     metrica: rollbacks_per_s
-    descricao: Rollbacks por segundo (media 1 min)
+    descricao: Rollbacks por segundo (média 1 min)
     operador: ">"
     amarelo: 0.5
     vermelho: 2
@@ -92,7 +92,7 @@ regras:
   - id: dns_disponibilidade
     servico: dns
     metrica: up
-    descricao: DNS nao responde
+    descricao: DNS não responde
     operador: "<"
     vermelho: 1
     ciclos: 2
@@ -100,7 +100,7 @@ regras:
   - id: dns_latencia_p95
     servico: dns
     metrica: resolve_ms
-    descricao: Tempo de resolucao DNS p95 (1 min)
+    descricao: Tempo de resolução DNS p95 (1 min)
     operador: ">"
     amarelo: 100
     vermelho: 500
@@ -112,7 +112,7 @@ regras:
   - id: dns_falhas
     servico: dns
     metrica: failure_rate
-    descricao: Falhas do servidor DNS (SERVFAIL, REFUSED, timeout; NXDOMAIN nao conta)
+    descricao: Falhas do servidor DNS (SERVFAIL, REFUSED, timeout; NXDOMAIN não conta)
     operador: ">"
     amarelo: 2
     vermelho: 10
@@ -151,7 +151,7 @@ regras:
   - id: smtp_latencia
     servico: smtp
     metrica: send_latency_ms
-    descricao: Latencia de envio SMTP (media 1 min)
+    descricao: Latência de envio SMTP (média 1 min)
     operador: ">"
     amarelo: 500
     vermelho: 2000
@@ -161,13 +161,13 @@ regras:
     ciclos: 3
     ciclos_recuperacao: 3
 
-  # ---------- Seguranca ----------
-  # z-score = (RPS agora - media da baseline de 10 min) / desvio padrao da baseline.
-  # Quantos desvios padrao o trafego atual esta acima do normal.
+  # ---------- Segurança ----------
+  # z-score = (RPS agora - media da baseline de 10 min) / desvio padrão da baseline.
+  # Quantos desvios padrão o trafego atual esta acima do normal.
   - id: sec_ddos_zscore
     servico: security
     metrica: rps_zscore
-    descricao: Anomalia de trafego (z-score do RPS)
+    descricao: Anomalia de tráfego (z-score do RPS)
     operador: ">"
     amarelo: 3
     vermelho: 6
@@ -176,13 +176,13 @@ regras:
   - id: sec_ddos_razao
     servico: security
     metrica: rps_ratio
-    descricao: RPS muito acima da baseline (razao)
+    descricao: RPS muito acima da baseline (razão)
     operador: ">"
-    vermelho: 10          # 10x o trafego normal
+    vermelho: 10          # 10x o tráfego normal
     unidade: x
     ciclos: 2
     ciclos_recuperacao: 3
-  # Falhas de autenticacao do MESMO IP em 60 s (401 no /admin + senha errada no Postgres)
+  # Falhas de autenticação do MESMO IP em 60 s (401 no /admin + senha errada no Postgres)
   - id: sec_bruteforce_ip
     servico: security
     metrica: max_auth_failures_per_ip
@@ -196,7 +196,7 @@ regras:
   - id: sec_config
     servico: security
     metrica: config_changed_files
-    descricao: Arquivo de configuracao alterado (hash SHA-256 difere da baseline)
+    descricao: Arquivo de configuração alterado (hash SHA-256 difere da baseline)
     operador: ">"
     amarelo: 0
     vermelho: 3
