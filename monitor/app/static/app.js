@@ -3,7 +3,9 @@
 
 const NIVEL = { 1: "Verde", 2: "Amarelo", 3: "Vermelho" };
 const SERVICOS = ["web", "db", "dns", "smtp"];
-const NOMES = { web: "Web Server (nginx)", db: "Banco de Dados (PostgreSQL)", dns: "DNS (CoreDNS)", smtp: "SMTP (Mailpit)" };
+const CARDS = [...SERVICOS, "security"];   // cards da Visao Geral
+const ROTA = { security: "seguranca" };
+const NOMES = { security: "Segurança", web: "Web Server (nginx)", db: "Banco de Dados (PostgreSQL)", dns: "DNS (CoreDNS)", smtp: "SMTP (Mailpit)" };
 const CORES = ["#38bdf8", "#f97316", "#a78bfa", "#22c55e", "#f43f5e"];
 const INTERVALO_MS = 5000;
 
@@ -12,6 +14,7 @@ const RESUMO = {
   web: { spark: "rps", kpis: [["rps", "RPS", "/s", 1], ["latency_ms", "Latência", " ms", 0], ["error_rate_5xx", "Erro 5xx", "%", 1]] },
   db: { spark: "qps", kpis: [["qps", "QPS", "/s", 1], ["connections_percent", "Conexões", "%", 0], ["slow_queries", "Slow queries", "", 0]] },
   dns: { spark: "resolve_ms", kpis: [["resolve_ms", "Resolução", " ms", 1], ["qps", "QPS", "/s", 1], ["failure_rate", "Falhas", "%", 1]] },
+  security: { spark: "rps_zscore", kpis: [["rps_zscore", "z-score RPS", "", 1], ["max_auth_failures_per_ip", "Falhas/IP (60 s)", "", 0], ["config_changed_files", "Config alterada", "", 0]] },
   smtp: { spark: "send_latency_ms", kpis: [["delivery_rate", "Entrega", "%", 0], ["queue_size", "Fila", "", 0], ["send_latency_ms", "Latência", " ms", 0]] },
 };
 
@@ -121,6 +124,9 @@ function montarDados(linhas, g) {
   const rel = linhas.filter((r) => metricas.has(r.metric));
   const tempos = [...new Set(rel.map((r) => r.ts))].sort((a, b) => a - b);
   const datasets = series.map((s, i) => {
+    if (s.const !== undefined) {  // linha horizontal de referencia (ex.: limiar do alerta)
+      return { label: s.n, data: tempos.map(() => s.const), borderColor: s.cor || "#eab308", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false };
+    }
     const mapa = new Map();
     for (const r of rel) {
       if (r.metric === s.m && (!s.lab || (r.labels && r.labels[g.label] === s.lab))) mapa.set(r.ts, r.value * (s.f || 1));
@@ -168,8 +174,8 @@ function sparkline(chave, canvas, linhas, cor) {
 // ---------------- Visao Geral ----------------
 function paginaGeral() {
   $("conteudo").innerHTML = `<h2>Visão Geral</h2>
-    <div class="grade" id="cards">${SERVICOS.map((s) => `
-      <a class="card nivel1" id="card-${s}" href="#/${s}">
+    <div class="grade" id="cards">${CARDS.map((s) => `
+      <a class="card nivel1" id="card-${s}" href="#/${ROTA[s] || s}">
         <div class="card-topo"><strong>${NOMES[s]}</strong><span id="selo-${s}"></span></div>
         <div class="kpis" id="kpis-${s}"></div>
         <div class="sparkbox"><canvas id="spark-${s}"></canvas></div>
@@ -180,17 +186,18 @@ function paginaGeral() {
     async atualizar() {
       const [servicos, alertas, ...series] = await Promise.all([
         api("/api/services"), api("/api/alerts?limit=8"),
-        ...SERVICOS.map((s) => api(`/api/metrics?service=${s}&metric=${RESUMO[s].spark}&since=5m`)),
+        ...CARDS.map((s) => api(`/api/metrics?service=${s}&metric=${RESUMO[s].spark}&since=5m`)),
       ]);
       for (const sv of servicos) {
         const s = sv.service, nivel = sv.nivel || 1;
+        if (!$("card-" + s)) continue;
         $("card-" + s).className = `card nivel${nivel}`;
         $("selo-" + s).innerHTML = sv.up === false ? selo(3, "FORA DO AR") : selo(nivel);
         $("kpis-" + s).innerHTML = RESUMO[s].kpis.map(([m, rot, un, d]) =>
           `<div class="kpi"><small>${rot}</small><b>${sv.up === false || sv.metrics[m] === undefined ? "-" : num(sv.metrics[m], d) + un}</b></div>`).join("");
         $("rodape-" + s).textContent = sv.alertas_ativos ? `${sv.alertas_ativos} alerta(s) ativo(s)` : "Nenhum alerta ativo";
       }
-      SERVICOS.forEach((s, i) => sparkline("spark-" + s, $("spark-" + s), series[i], "#38bdf8"));
+      CARDS.forEach((s, i) => sparkline("spark-" + s, $("spark-" + s), series[i], "#38bdf8"));
       $("ultimos").innerHTML = alertas.length ? `<ul class="lista-alertas">${alertas.map(linhaAlerta).join("")}</ul>`
         : `<div class="vazio">Nenhum alerta registrado. Tudo verde por enquanto.</div>`;
     },
@@ -283,10 +290,112 @@ function paginaAlertas() {
   };
 }
 
+// ---------------- Seguranca ----------------
+const GRAFICOS_SEG = [
+  { t: "Tráfego: RPS atual e baseline (média de 10 min)", s: [{ m: "rps", n: "RPS" }, { m: "rps_baseline", n: "baseline" }] },
+  { t: "z-score do RPS (desvios padrão acima do normal)", s: [{ m: "rps_zscore", n: "z-score" }, { const: 3, n: "amarelo (z > 3)" }, { const: 6, n: "vermelho (z > 6)", cor: "#ef4444" }] },
+  { t: "Falhas de autenticação (janela de 60 s)", s: [{ m: "auth_failures_total", n: "total" }, { m: "max_auth_failures_per_ip", n: "máx. por IP" }, { const: 10, n: "amarelo (10)" }, { const: 30, n: "vermelho (30)", cor: "#ef4444" }] },
+];
+const curto = (h) => (h ? h.slice(0, 12) + "…" : "-");
+
 function paginaSeguranca() {
-  $("conteudo").innerHTML = `<h2>Segurança</h2><div class="card"><p>Esta área será construída na Fase 3: detecção de brute force
-    (rajadas de 401 no <code>/admin</code>), picos de tráfego (DDoS) e alteração de arquivos de configuração.</p></div>`;
-  return { async atualizar() {} };
+  $("conteudo").innerHTML = `<h2>Segurança <span id="selo"></span></h2>
+    <div class="card"><h4>Simulador de ataques (loadgen)</h4>
+      <div class="barra" id="modos">
+        <button data-m="normal">Normal</button><button data-m="pico">Pico (DDoS)</button><button data-m="bruteforce">Brute force</button>
+        <span class="suave" id="modo-atual"></span></div>
+      <div class="suave">Troca o modo do gerador de tráfego ao vivo, sem rebuild. Os alertas levam alguns ciclos (5 s cada) para disparar.</div></div>
+    <h3>Alertas de segurança ativos</h3><div class="ativos" id="ativos"></div>
+    <div class="barra" style="margin-top:14px">${["5m", "15m", "1h"].map((p) => `<button data-p="${p}" class="${p === periodo ? "ativo" : ""}">${p === "1h" ? "1 hora" : p.replace("m", " min")}</button>`).join("")}</div>
+    <h3>Anomalia de tráfego (DDoS)</h3>
+    <div class="card"><div class="kpis" id="tiles-ddos"></div></div>
+    <div class="grade graficos" style="margin-top:14px">
+      <div class="card"><h4>${GRAFICOS_SEG[0].t}</h4><div class="chartbox"><canvas id="s0"></canvas></div></div>
+      <div class="card"><h4>${GRAFICOS_SEG[1].t}</h4><div class="chartbox"><canvas id="s1"></canvas></div></div>
+      <div class="card"><h4>Top 5 IPs por volume (últimos 60 s)</h4><div id="top-ips"></div></div></div>
+    <h3>Brute force</h3>
+    <div class="card"><div class="kpis" id="tiles-brute"></div></div>
+    <div class="grade graficos" style="margin-top:14px">
+      <div class="card"><h4>${GRAFICOS_SEG[2].t}</h4><div class="chartbox"><canvas id="s2"></canvas></div></div>
+      <div class="card"><h4>Contas alvo</h4><div class="tabela" id="contas"></div></div></div>
+    <div class="card" style="margin-top:14px"><h4>IPs suspeitos (falhas de login em 60 s)</h4><div class="tabela" id="suspeitos"></div></div>
+    <h3>Alteração de configuração (SHA-256)</h3>
+    <div class="barra"><button id="aceitar">Aceitar nova baseline</button><span class="suave" id="cfg-resumo"></span></div>
+    <div class="tabela" id="config"></div><div id="diffs"></div>
+    <h3>Vulnerabilidades conhecidas (Trivy)</h3>
+    <div class="suave" style="margin-bottom:10px">Para escanear: <code>docker compose --profile scan run --rm trivy</code></div>
+    <div class="ativos" id="vulns"></div>`;
+
+  const trocarPeriodo = (b) => {
+    periodo = b.dataset.p;
+    document.querySelectorAll("[data-p]").forEach((x) => x.classList.toggle("ativo", x === b));
+    destruirCharts(); tick();
+  };
+  document.querySelectorAll("[data-p]").forEach((b) => b.addEventListener("click", () => trocarPeriodo(b)));
+  document.querySelectorAll("#modos button").forEach((b) => b.addEventListener("click", async () => {
+    await fetch("/api/loadgen/" + b.dataset.m, { method: "POST" });
+    tick();
+  }));
+  $("aceitar").addEventListener("click", async () => {
+    if (!confirm("Aceitar o estado atual dos arquivos como a nova baseline?")) return;
+    await fetch("/api/security/config/accept", { method: "POST" });
+    tick();
+  });
+
+  const sevSpan = (sev, n) => `<span class="sev sev-${sev}">${sev[0]}${sev.slice(1).toLowerCase()}: ${n}</span>`;
+  return {
+    async atualizar() {
+      const [sec, linhas, ativos, modo] = await Promise.all([
+        api("/api/security"), api(`/api/metrics?service=security&since=${periodo}&limit=${periodo === "1h" ? 20000 : 10000}`),
+        api("/api/alerts?service=security&active=true"), api("/api/loadgen").catch(() => null),
+      ]);
+      $("selo").innerHTML = selo(sec.nivel);
+      document.querySelectorAll("#modos button").forEach((b) => b.classList.toggle("ativo", modo && b.dataset.m === modo.modo));
+      $("modo-atual").textContent = modo ? "modo atual: " + modo.modo : "loadgen indisponível";
+      $("ativos").innerHTML = ativos.length ? ativos.map((a) => `<div class="ativo-card n${a.level}">${selo(a.level)} ${esc(a.message)}
+          <div class="suave">desde ${dataHora(a.opened_ts)}</div></div>`).join("")
+        : `<div class="card vazio">Nenhum alerta de segurança ativo.</div>`;
+
+      const d = sec.ddos;
+      const t = (rot, v, un, dec) => `<div class="kpi"><small>${rot}</small><b>${v === null || v === undefined ? "-" : num(v, dec) + un}</b></div>`;
+      $("tiles-ddos").innerHTML = t("RPS atual", d.rps, "/s", 1) + t("Baseline (média)", d.baseline, "/s", 1) + t("Desvio padrão", d.desvio, "", 2)
+        + t("z-score", d.zscore, "", 1) + t("Razão (RPS ÷ baseline)", d.razao, "x", 1)
+        + `<div class="kpi"><small>Amostras na baseline</small><b>${d.amostras}</b></div>`;
+      $("top-ips").innerHTML = sec.top_ips.length ? `<table><tr><th>#</th><th>IP</th><th>Requisições</th><th></th></tr>${sec.top_ips.map((x, i) => {
+        const max = sec.top_ips[0].requisicoes;
+        return `<tr><td>${i + 1}</td><td>${esc(x.ip)}</td><td>${x.requisicoes}</td><td style="width:40%"><div class="barra-ip" style="width:${Math.round(100 * x.requisicoes / max)}%"></div></td></tr>`;
+      }).join("")}</table>` : `<div class="vazio">Sem requisições na janela.</div>`;
+
+      const b = sec.brute;
+      const maxIp = b.ips.length ? b.ips[0].falhas : 0, maxConta = b.contas.length ? b.contas[0].falhas : 0;
+      $("tiles-brute").innerHTML = t("Falhas em 60 s", b.ips.reduce((a, x) => a + x.falhas, 0), "", 0) + t("Máx. por IP", maxIp, "", 0) + t("Máx. por conta", maxConta, "", 0);
+      $("suspeitos").innerHTML = b.ips.length ? `<table><tr><th>IP</th><th>Fonte</th><th>Falhas</th><th>Primeiro visto</th><th>Último visto</th><th>Situação</th></tr>${b.ips.map((x) =>
+        `<tr><td>${esc(x.ip)}</td><td>${esc(x.fontes.join(", "))}</td><td><b>${x.falhas}</b></td><td>${hora(x.primeiro_visto)}</td><td>${hora(x.ultimo_visto)}</td>
+        <td>${x.falhas > 30 ? selo(3, "ATAQUE") : x.falhas > 10 ? selo(2, "SUSPEITO") : "observação"}</td></tr>`).join("")}</table>`
+        : `<div class="vazio">Nenhuma falha de login na janela.</div>`;
+      $("contas").innerHTML = b.contas.length ? `<table><tr><th>Conta</th><th>Falhas</th></tr>${b.contas.map((x) => `<tr><td>${esc(x.conta)}</td><td>${x.falhas}</td></tr>`).join("")}</table>`
+        : `<div class="vazio">Sem falhas.</div>`;
+
+      GRAFICOS_SEG.forEach((g, i) => criarOuAtualizar("s" + i, $("s" + i), g, linhas));
+
+      const cfg = sec.config;
+      $("cfg-resumo").textContent = cfg.alterados ? `${cfg.alterados} arquivo(s) diferente(s) da baseline` : `${cfg.arquivos.length} arquivos monitorados, todos iguais à baseline`;
+      $("config").innerHTML = `<table><tr><th>Arquivo</th><th>Situação</th><th>Hash da baseline</th><th>Hash atual</th></tr>${cfg.arquivos.map((a) =>
+        `<tr><td>${esc(a.arquivo)}</td><td>${a.status === "ok" ? selo(1, "OK") : selo(3, a.status.toUpperCase())}</td><td><code>${curto(a.hash_baseline)}</code></td><td><code>${curto(a.hash_atual)}</code></td></tr>`).join("")}</table>`;
+      $("diffs").innerHTML = cfg.arquivos.filter((a) => a.status !== "ok").map((a) =>
+        `<div class="card" style="margin-top:10px"><h4>${esc(a.arquivo)} (${a.status})</h4><div class="suave">antigo ${esc(a.hash_baseline || "-")}<br>novo &nbsp;&nbsp;${esc(a.hash_atual || "-")}</div><pre class="diff">${esc(a.diff)}</pre></div>`).join("");
+
+      const svs = Object.entries(sec.vulns);
+      $("vulns").innerHTML = svs.length ? svs.map(([svc, v]) => `<div class="card">
+          <div class="card-topo"><strong>${NOMES[svc]}</strong><span class="suave">${v.total} CVEs</span></div>
+          <div class="suave">${esc(v.imagem)} · scan em ${dataHora(v.scan_ts)}</div>
+          <div class="kpis">${["CRITICAL", "HIGH", "MEDIUM", "LOW"].map((s) => sevSpan(s, v.contagem[s])).join(" ")}</div>
+          <details><summary>Principais CVEs</summary><div class="tabela"><table><tr><th>CVE</th><th>Sev.</th><th>Pacote</th><th>Instalada</th><th>Corrigida em</th><th>CVSS</th></tr>
+          ${v.principais.map((c) => `<tr><td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.id)}</a></td><td><span class="sev sev-${c.severidade}">${c.severidade}</span></td>
+          <td>${esc(c.pacote)}</td><td>${esc(c.versao)}</td><td>${esc(c.corrigida || "sem correção")}</td><td>${c.cvss || "-"}</td></tr>`).join("")}</table></div></details></div>`).join("")
+        : `<div class="card vazio">Nenhum scan encontrado. Rode: docker compose --profile scan run --rm trivy</div>`;
+    },
+  };
 }
 
 // ---------------- roteamento e ciclo de atualizacao ----------------
@@ -314,6 +423,13 @@ async function tick() {
     if (pendente) { pendente = false; tick(); }
   }
 }
+
+// Menu hamburguer no celular: abre/fecha a lista e fecha ao escolher uma pagina
+$("btn-menu").addEventListener("click", () => {
+  const aberto = $("menu").classList.toggle("aberto");
+  $("btn-menu").setAttribute("aria-expanded", aberto);
+});
+$("menu").addEventListener("click", (e) => { if (e.target.tagName === "A") $("menu").classList.remove("aberto"); });
 
 window.addEventListener("hashchange", rotear);
 setInterval(tick, INTERVALO_MS);

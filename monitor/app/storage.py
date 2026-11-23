@@ -32,6 +32,11 @@ def init() -> None:
                )"""
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_metrics ON metrics (service, metric, ts)")
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS config_baseline (
+                   path TEXT PRIMARY KEY, sha256 TEXT NOT NULL, content TEXT, updated_ts REAL NOT NULL
+               )"""
+        )
         # Tabela de alertas: 1 linha por INCIDENTE (abertura, mudancas de nivel, resolucao).
         # Esquema antigo (fase 1, vazio) e descartado.
         cols = [r[1] for r in c.execute("PRAGMA table_info(alerts)")]
@@ -165,6 +170,24 @@ def list_alerts(limit=100, service=None, level=None, active=None) -> list[dict]:
             d["events"] = json.loads(d["events"])
             out.append(d)
         return out
+
+
+# ---- Baseline de configuracao (hash SHA-256 por arquivo) ----
+def config_baseline_get() -> dict:
+    with _conn() as c:
+        return {r["path"]: {"sha": r["sha256"], "conteudo": r["content"], "ts": r["updated_ts"]}
+                for r in c.execute("SELECT * FROM config_baseline")}
+
+
+def config_baseline_set(arquivos: dict, substituir: bool = False) -> None:
+    """arquivos: {caminho: {sha, conteudo}}. substituir=True apaga a baseline anterior."""
+    with _conn() as c:
+        if substituir:
+            c.execute("DELETE FROM config_baseline")
+        c.executemany(
+            "INSERT OR REPLACE INTO config_baseline VALUES (?,?,?,?)",
+            [(p, v["sha"], v["conteudo"], time.time()) for p, v in arquivos.items()],
+        )
 
 
 def count_rows() -> int:

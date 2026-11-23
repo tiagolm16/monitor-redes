@@ -11,7 +11,11 @@ from fastapi.staticfiles import StaticFiles
 from . import storage
 from .alerts import Motor
 from .collectors.dns_check import DnsCollector
+import httpx
+
+from . import config_watch
 from .collectors.postgres import PostgresCollector
+from .collectors.seguranca import SegurancaCollector
 from .collectors.smtp_check import SmtpCollector
 from .collectors.web import WebCollector
 
@@ -20,9 +24,11 @@ logging.getLogger("httpx").setLevel(logging.WARNING)  # senao loga cada requisic
 log = logging.getLogger("monitor")
 
 INTERVALO = float(os.getenv("COLLECT_INTERVAL", "5"))
-SERVICOS = ["web", "db", "dns", "smtp"]
+SERVICOS = ["web", "db", "dns", "smtp", "security"]
+LOADGEN_URL = os.getenv("LOADGEN_URL", "http://loadgen:8090")
 estado = {"inicio": time.time(), "ultimo_ciclo": None}
 motor: Motor | None = None
+seguranca: SegurancaCollector | None = None
 
 
 async def _coletar_um(coletor):
@@ -35,7 +41,7 @@ async def _coletar_um(coletor):
 
 
 async def loop_coleta():
-    coletores = [WebCollector(), PostgresCollector(), DnsCollector(), SmtpCollector()]
+    coletores = [WebCollector(), PostgresCollector(), DnsCollector(), SmtpCollector(), seguranca]
     while True:
         inicio = time.monotonic()
         ts = time.time()
@@ -57,9 +63,11 @@ async def loop_coleta():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global motor
+    global motor, seguranca
     storage.init()
+    seguranca = SegurancaCollector()
     motor = Motor(os.getenv("ALERTS_FILE", os.path.join(os.path.dirname(__file__), "..", "alerts.yaml")))
+    motor.provedor_detalhe = seguranca.detalhe_alerta  # e-mails de seguranca levam IPs, hashes e diff
     tarefa = asyncio.create_task(loop_coleta())
     yield
     tarefa.cancel()
@@ -145,6 +153,50 @@ def alerts(
 def alert_rules():
     """Regras do alerts.yaml com o nivel e o ultimo valor avaliado de cada uma."""
     return motor.listar_regras()
+
+
+@app.get("/api/security")
+def security():
+    """Painel de seguranca: trafego/DDoS, brute force, configuracao e vulnerabilidades."""
+    est = seguranca.estado
+    arquivos = est["config"]
+    return {
+        "nivel": motor.nivel_servicos().get("security", 1),
+        "ddos": est["ddos"],
+        "top_ips": est["top_ips"],
+        "brute": est["brute"],
+        "config": {"arquivos": arquivos, "alterados": sum(1 for a in arquivos if a["status"] != "ok")},
+        "vulns": seguranca.vulns,
+        "regras": [r for r in motor.listar_regras() if r["servico"] == "security"],
+    }
+
+
+@app.post("/api/security/config/accept")
+def accept_config():
+    """Aceita o estado atual dos arquivos de /config como a nova baseline (mudanca autorizada)."""
+    config_watch.aceitar_baseline()
+    return {"ok": True}
+
+
+@app.get("/api/loadgen")
+async def loadgen_modo():
+    """Modo atual do gerador de trafego (normal | pico | bruteforce)."""
+    try:
+        async with httpx.AsyncClient(timeout=3) as c:
+            return (await c.get(f"{LOADGEN_URL}/mode")).json()
+    except httpx.HTTPError:
+        raise HTTPException(502, "loadgen indisponivel")
+
+
+@app.post("/api/loadgen/{modo}")
+async def loadgen_trocar(modo: str):
+    """Troca o modo do loadgen ao vivo (usado pelos botoes da aba Seguranca)."""
+    try:
+        async with httpx.AsyncClient(timeout=3) as c:
+            r = await c.post(f"{LOADGEN_URL}/mode/{modo}")
+            return r.json()
+    except httpx.HTTPError:
+        raise HTTPException(502, "loadgen indisponivel")
 
 
 # Front-end estatico (precisa vir por ultimo, senao "/" engole as rotas /api)

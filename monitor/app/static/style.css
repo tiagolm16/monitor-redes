@@ -72,3 +72,25 @@ tr:last-child td { border-bottom: 0; }
   .grade.graficos { grid-template-columns: 1fr; }
   .topo h1 { font-size: .95rem; }
 }
+
+/* ---- Seguranca ---- */
+.sev { padding: 1px 8px; border-radius: 4px; font-size: .78rem; font-weight: 700; color: #111; white-space: nowrap; }
+.sev-CRITICAL { background: var(--vermelho); color: #fff; }
+.sev-HIGH { background: #f97316; }
+.sev-MEDIUM { background: var(--amarelo); }
+.sev-LOW { background: var(--azul); }
+.barra-ip { height: 10px; background: var(--azul); border-radius: 3px; }
+pre.diff { background: #0b1220; border: 1px solid var(--borda); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: .8rem; margin: 8px 0 0; }
+details summary { cursor: pointer; color: var(--azul); margin-top: 6px; }
+code { background: #0b1220; padding: 1px 5px; border-radius: 4px; }
+.card .tabela { border: 0; }
+
+/* ---- Menu hamburguer (celular) ---- */
+#btn-menu { display: none; font-size: 1.2rem; padding: 4px 10px; }
+@media (max-width: 600px) {
+  #btn-menu { display: inline-block; }
+  nav { display: none; flex-direction: column; padding: 4px 8px 8px; overflow: visible; }
+  nav.aberto { display: flex; }
+  nav a { border-bottom: 0; border-left: 3px solid transparent; padding: 10px 12px; }
+  nav a.ativo { border-left-color: var(--azul); }
+}

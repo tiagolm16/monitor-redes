@@ -94,6 +94,7 @@ class Motor:
             for r in self.regras
         }
         self._tarefas: set[asyncio.Task] = set()
+        self.provedor_detalhe = None  # funcao(regra_id) -> texto extra para o e-mail (ex.: IPs atacantes)
         # Se o monitor reiniciou com incidente aberto, retoma de onde parou (evita e-mail duplicado)
         for a in storage.list_alerts(500, active=True):
             if a["rule"] in self.estado:
@@ -172,11 +173,23 @@ class Motor:
             f"<tr><td style='padding:4px 12px 4px 0;color:#555'>{html.escape(k)}</td>"
             f"<td><b>{html.escape(str(v))}</b></td></tr>" for k, v in linhas
         )
-        msg.set_content("\n".join(f"{k}: {v}" for k, v in linhas) + f"\nDashboard: {DASHBOARD_URL}/#/alertas")
+        # Detalhe extra (ex.: IPs atacantes, diff do arquivo alterado), fornecido pelo coletor de seguranca
+        detalhe = ""
+        if self.provedor_detalhe and novo > 1:
+            try:
+                detalhe = self.provedor_detalhe(r.id)
+            except Exception:
+                log.exception("erro ao montar detalhe do alerta")
+        texto = "\n".join(f"{k}: {v}" for k, v in linhas)
+        if detalhe:
+            texto += f"\n\n{detalhe}"
+        msg.set_content(texto + f"\n\nDashboard: {DASHBOARD_URL}/#/alertas")
+        bloco_detalhe = (f"<pre style='background:#f3f4f6;padding:8px;font-size:12px'>{html.escape(detalhe)}</pre>"
+                         if detalhe else "")
         msg.add_alternative(
             f"<html><body style='font-family:Arial,sans-serif'>"
             f"<h2 style='color:{CORES[novo]};margin-bottom:4px'>{html.escape(titulo)}: {NOMES[novo]}</h2>"
-            f"<p>{html.escape(r.descricao)}</p><table>{tabela}</table>"
+            f"<p>{html.escape(r.descricao)}</p><table>{tabela}</table>{bloco_detalhe}"
             f"<p><a href='{DASHBOARD_URL}/#/alertas'>Abrir o dashboard</a></p></body></html>",
             subtype="html",
         )

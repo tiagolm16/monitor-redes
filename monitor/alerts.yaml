@@ -160,3 +160,54 @@ regras:
     unidade: ms
     ciclos: 3
     ciclos_recuperacao: 3
+
+  # ---------- Seguranca ----------
+  # z-score = (RPS agora - media da baseline de 10 min) / desvio padrao da baseline.
+  # Quantos desvios padrao o trafego atual esta acima do normal.
+  - id: sec_ddos_zscore
+    servico: security
+    metrica: rps_zscore
+    descricao: Anomalia de trafego (z-score do RPS)
+    operador: ">"
+    amarelo: 3
+    vermelho: 6
+    ciclos: 2
+    ciclos_recuperacao: 3
+  - id: sec_ddos_razao
+    servico: security
+    metrica: rps_ratio
+    descricao: RPS muito acima da baseline (razao)
+    operador: ">"
+    vermelho: 10          # 10x o trafego normal
+    unidade: x
+    ciclos: 2
+    ciclos_recuperacao: 3
+  # Falhas de autenticacao do MESMO IP em 60 s (401 no /admin + senha errada no Postgres)
+  - id: sec_bruteforce_ip
+    servico: security
+    metrica: max_auth_failures_per_ip
+    descricao: Brute force (falhas de login do mesmo IP em 60 s)
+    operador: ">"
+    amarelo: 10
+    vermelho: 30
+    ciclos: 2
+    ciclos_recuperacao: 3
+  # Arquivos de /config cujo SHA-256 difere da baseline. Atua imediatamente (1 ciclo).
+  - id: sec_config
+    servico: security
+    metrica: config_changed_files
+    descricao: Arquivo de configuracao alterado (hash SHA-256 difere da baseline)
+    operador: ">"
+    amarelo: 0
+    vermelho: 3
+    ciclos: 1
+    ciclos_recuperacao: 2
+  - id: sec_vuln_critical
+    servico: security
+    metrica: vulns_critical_total
+    descricao: Vulnerabilidades CRITICAL nas imagens (Trivy)
+    operador: ">"
+    amarelo: 0
+    vermelho: 10
+    ciclos: 2
+    ciclos_recuperacao: 3
