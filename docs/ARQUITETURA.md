@@ -44,10 +44,10 @@ Plataforma de monitoramento para DevOps que observa quatro serviços de rede (We
 
 | Componente | Imagem | Função | O que o monitor lê dele |
 |---|---|---|---|
-| **nginx** | `nginx:1.27-alpine` | Site de teste, `stub_status`, `/admin` com `auth_basic`, log de acesso em JSON | HTTP check, `stub_status`, access log (volume compartilhado) |
-| **postgres** | `postgres:16` | Banco com `pg_stat_statements` e log de queries lentas (> 200 ms) | Views de estatística (SQL), CPU/memória pelo `docker.sock`, log de falhas de login |
-| **coredns** | `coredns/coredns:1.11.3` | DNS autoritativo da zona `lab.local`, métricas Prometheus na 9153 | Consulta DNS real (UDP 53) e `/metrics` |
-| **mailpit** | `axllent/mailpit:v1.21` | Servidor SMTP de laboratório (porta 1025) com interface web (8025) que recebe os e-mails de alerta | Banner SMTP, API HTTP para confirmar entrega |
+| **nginx** | `nginx:stable-alpine3.23` | Site de teste, `stub_status`, `/admin` com `auth_basic`, log de acesso em JSON | HTTP check, `stub_status`, access log (volume compartilhado) |
+| **postgres** | `postgres:17-alpine` | Banco com `pg_stat_statements` e log de queries lentas (> 200 ms) | Views de estatística (SQL), CPU/memória pelo `docker.sock`, log de falhas de login |
+| **coredns** | `coredns/coredns:1.13.1` | DNS autoritativo da zona `lab.local`, métricas Prometheus na 9153 | Consulta DNS real (UDP 53) e `/metrics` |
+| **mailpit** | `axllent/mailpit:v1.28` | Servidor SMTP de laboratório (porta 1025) com interface web (8025) que recebe os e-mails de alerta | Banner SMTP, API HTTP para confirmar entrega |
 | **monitor** | build local (`python:3.12-slim`) | Coleta, armazena, alerta e serve a API e o painel | (é o centro do sistema) |
 | **loadgen** | build local (`python:3.12-slim`) | Gera tráfego realista e simula ataques, modo trocável ao vivo | n/a |
 | **trivy** | `aquasec/trivy:0.58.1` | Escaneia as imagens e grava JSON (só roda com o profile `scan`) | JSON por serviço |

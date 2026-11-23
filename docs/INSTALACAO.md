@@ -158,6 +158,15 @@ git reset --hard
 
 (Atenção: `git reset --hard` descarta alterações locais não commitadas.)
 
+**O Postgres não sobe depois de atualizar o projeto (`database files are incompatible with server`)**
+A Fase 4 trocou `postgres:16` por `postgres:17-alpine`, e o volume de dados antigo não é compatível. Em laboratório, basta recriar o volume (os dados de teste são regenerados pelo `init.sql` e pelo gerador de tráfego):
+
+```powershell
+docker compose down
+docker volume rm monitor-redes_pgdata
+docker compose up -d --build
+```
+
 **Os containers sobem mas o painel não mostra dados**
 Espere 30 a 60 s. Veja `docker compose logs monitor --tail 50`. O monitor só inicia depois que o Postgres fica saudável (`docker compose ps` mostra `healthy`).
 

@@ -71,7 +71,7 @@ def test_T13_ddos_zscore(page):
     expect(page.locator("#top-ips table")).to_contain_text("203.0.113.", timeout=20000)
     # O alerta amarelo (z > 3) dispara antes do pico "encher" a janela; espera o z-score passar do limiar vermelho
     esperar(lambda: api("/api/security")["ddos"]["zscore"] > 6, 40, descricao="z-score acima de 6")
-    esperar(lambda: any("security: Anomalia de trafego" in s for s in assuntos_emails(t0)), 30, descricao="e-mail de DDoS")
+    esperar(lambda: any("security: Anomalia de tráfego" in s for s in assuntos_emails(t0)), 30, descricao="e-mail de DDoS")
     evidencia(page, "T13_ddos")
     loadgen_modo("normal")
     esperar(lambda: alerta_resolvido("sec_ddos", t0), 120, descricao="alerta de DDoS resolvido")
@@ -103,7 +103,7 @@ def test_T15_alteracao_de_configuracao(page):
         cfg = api("/api/security")["config"]["arquivos"]
         alterado = [a for a in cfg if a["status"] != "ok"][0]
         assert alterado["hash_baseline"] != alterado["hash_atual"] and len(alterado["hash_atual"]) == 64
-        esperar(lambda: any("Arquivo de configuracao alterado" in s for s in assuntos_emails(t0)), 30, descricao="e-mail de config")
+        esperar(lambda: any("Arquivo de configuração alterado" in s for s in assuntos_emails(t0)), 30, descricao="e-mail de config")
         evidencia(page, "T15_config_alterada")
     finally:
         NGINX_CONF.write_bytes(original)
