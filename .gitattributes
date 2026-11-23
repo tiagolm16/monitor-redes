@@ -13,3 +13,4 @@ htpasswd text eol=lf
 *.db text eol=lf
 *.db-wal binary
 *.db-shm binary
+*.ps1 text eol=lf

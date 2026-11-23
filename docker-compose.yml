@@ -11,6 +11,8 @@ volumes:
   nginx-logs:    # access log JSON: nginx escreve, monitor le
   pgdata:
   monitor-data:  # SQLite do monitor
+  trivy-results: # JSON do scan de vulnerabilidades: trivy escreve, monitor le
+  trivy-cache:   # banco de CVEs do Trivy (evita baixar de novo)
 
 services:
   nginx:
@@ -96,10 +98,14 @@ services:
       ALERT_TO: ${ALERT_TO:-ops@lab.local}
       ALERT_FROM: ${ALERT_FROM:-alertas@lab.local}
       DASHBOARD_URL: ${DASHBOARD_URL:-http://localhost:8000}
+      LOADGEN_URL: http://loadgen:8090
+      CONFIG_DIR: /config
+      TRIVY_DIR: /trivy
     volumes:
       - monitor-data:/data
       - nginx-logs:/var/log/nginx-json:ro
-      - ./services:/config:ro                       # para detectar alteracao de config (fase 2)
+      - ./services:/config:ro                       # hash SHA-256 dos arquivos: detecta alteracao de config
+      - trivy-results:/trivy:ro                     # resultado do scan de vulnerabilidades
       - /var/run/docker.sock:/var/run/docker.sock:ro  # para ler CPU/memoria do container do Postgres
     depends_on:
       postgres: { condition: service_healthy }
@@ -112,6 +118,7 @@ services:
   loadgen:
     build: ./loadgen
     container_name: rd-loadgen
+    ports: ["8090:8090"]   # API de controle do modo (POST /mode/pico)
     environment:
       LOAD_MODE: ${LOAD_MODE:-normal}   # normal | pico | bruteforce
       WEB_URL: http://nginx
@@ -125,3 +132,20 @@ services:
       mailpit: { condition: service_started }
     networks:
       lab: { ipv4_address: 172.28.77.21 }
+
+  # Scanner de vulnerabilidades. Nao sobe com o "up" normal: so com o profile "scan":
+  #   docker compose --profile scan run --rm trivy
+  trivy:
+    image: aquasec/trivy:0.58.1
+    container_name: rd-trivy
+    profiles: ["scan"]
+    entrypoint: ["/bin/sh", "/scan.sh"]
+    environment:
+      # O espelho da AWS (ECR) evita o limite de downloads do ghcr.io
+      TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+      TRIVY_NO_PROGRESS: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # le as imagens que ja estao no Docker local
+      - trivy-cache:/root/.cache/trivy
+      - trivy-results:/results
+      - ./services/trivy/scan.sh:/scan.sh:ro
