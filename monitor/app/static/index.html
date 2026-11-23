@@ -4,17 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monitor de Redes</title>
-  <style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem}</style>
+  <link rel="stylesheet" href="style.css">
+  <!-- Chart.js via CDN (sem build, sem npm) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
-  <h1>Monitor de Redes</h1>
-  <p>Placeholder da Fase 1. O dashboard chega na próxima fase.</p>
-  <ul>
-    <li><a href="/api/health">/api/health</a></li>
-    <li><a href="/api/services">/api/services</a></li>
-    <li><a href="/api/metrics?service=web&amp;since=5m">/api/metrics?service=web&amp;since=5m</a></li>
-    <li><a href="/api/alerts">/api/alerts</a></li>
-    <li><a href="/docs">/docs (Swagger)</a></li>
-  </ul>
+  <header>
+    <div class="topo">
+      <h1>Monitor de Redes</h1>
+      <div class="atualizacao"><span id="ponto" class="ponto"></span><span id="atualizacao">carregando...</span></div>
+    </div>
+    <nav id="menu">
+      <a href="#/" data-r="">Visão Geral</a>
+      <a href="#/web" data-r="web">Web</a>
+      <a href="#/db" data-r="db">Banco</a>
+      <a href="#/dns" data-r="dns">DNS</a>
+      <a href="#/smtp" data-r="smtp">SMTP</a>
+      <a href="#/alertas" data-r="alertas">Alertas</a>
+      <a href="#/seguranca" data-r="seguranca">Segurança</a>
+    </nav>
+    <div id="aviso"></div>
+  </header>
+  <main id="conteudo"></main>
+  <script src="app.js"></script>
 </body>
 </html>
