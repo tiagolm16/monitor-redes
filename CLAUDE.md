@@ -12,7 +12,7 @@ Windows 11 + Docker Desktop (WSL2). Shell principal: PowerShell. Cuidado com fim
 - `docker-compose.yml` sobe tudo com um único `docker compose up -d --build`
 - Serviços monitorados:
   - **nginx**: site simples + `stub_status` + access log em JSON num volume compartilhado + rota `/admin` com `auth_basic` (gera 401 para detecção de brute force)
-  - **postgres:16**: com `pg_stat_statements` e `log_min_duration_statement`
+  - **postgres** (17-alpine desde a Fase 4; era 16): com `pg_stat_statements` e `log_min_duration_statement`
   - **coredns**: zona local `lab.local`, plugin `prometheus` (:9153) e `log`
   - **mailpit**: SMTP 1025, UI web 8025 (recebe os e-mails de alerta)
 - **monitor**: Python 3.12 + FastAPI

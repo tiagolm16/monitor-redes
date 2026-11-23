@@ -16,7 +16,7 @@ volumes:
 
 services:
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:stable-alpine3.23
     container_name: rd-nginx
     environment:
       TZ: America/Sao_Paulo
@@ -30,7 +30,7 @@ services:
       lab: { ipv4_address: 172.28.77.10 }
 
   postgres:
-    image: postgres:16
+    image: postgres:17-alpine
     container_name: rd-postgres
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
@@ -52,7 +52,7 @@ services:
       lab: { ipv4_address: 172.28.77.11 }
 
   coredns:
-    image: coredns/coredns:1.11.3
+    image: coredns/coredns:1.13.1
     container_name: rd-coredns
     environment:
       TZ: America/Sao_Paulo
@@ -67,7 +67,7 @@ services:
       lab: { ipv4_address: 172.28.77.12 }
 
   mailpit:
-    image: axllent/mailpit:v1.21
+    image: axllent/mailpit:v1.28
     container_name: rd-mailpit
     environment:
       TZ: America/Sao_Paulo
