@@ -1,0 +1,118 @@
+name: monitor-redes
+
+# Rede propria com faixa fixa: assim cada servico tem IP previsivel e o DNS (lab.local) aponta para IPs reais.
+networks:
+  lab:
+    ipam:
+      config:
+        - subnet: 172.28.77.0/24
+
+volumes:
+  nginx-logs:    # access log JSON: nginx escreve, monitor le
+  pgdata:
+  monitor-data:  # SQLite do monitor
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: rd-nginx
+    ports: ["8081:80"]          # 8081 no host para nao brigar com nada que use a 80
+    volumes:
+      - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services/nginx/htpasswd:/etc/nginx/htpasswd:ro
+      - ./services/nginx/html:/usr/share/nginx/html:ro
+      - nginx-logs:/var/log/nginx-json
+    networks:
+      lab: { ipv4_address: 172.28.77.10 }
+
+  postgres:
+    image: postgres:16
+    container_name: rd-postgres
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app123      # senha de laboratorio
+      POSTGRES_DB: appdb
+    ports: ["5433:5432"]             # 5433 no host: evita conflito com Postgres local
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./services/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./services/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      lab: { ipv4_address: 172.28.77.11 }
+
+  coredns:
+    image: coredns/coredns:1.11.3
+    container_name: rd-coredns
+    command: ["-conf", "/etc/coredns/Corefile"]
+    ports:
+      - "1053:53/udp"   # DNS usa UDP 53 (host 1053, a 53 do Windows costuma estar ocupada)
+      - "1053:53/tcp"   # e TCP 53 para respostas grandes
+      - "9153:9153"     # metricas Prometheus
+    volumes:
+      - ./services/coredns:/etc/coredns:ro
+    networks:
+      lab: { ipv4_address: 172.28.77.12 }
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: rd-mailpit
+    env_file: ./services/mailpit/mailpit.env
+    ports:
+      - "1025:1025"     # SMTP
+      - "8025:8025"     # UI web + API
+    networks:
+      lab: { ipv4_address: 172.28.77.13 }
+
+  monitor:
+    build: ./monitor
+    container_name: rd-monitor
+    ports: ["8000:8000"]
+    environment:
+      COLLECT_INTERVAL: "5"
+      DB_PATH: /data/metrics.db
+      WEB_URL: http://nginx
+      NGINX_LOG: /var/log/nginx-json/access.log
+      PG_HOST: postgres
+      PG_USER: monitor
+      PG_PASSWORD: monitor
+      PG_DB: appdb
+      PG_CONTAINER: rd-postgres
+      DNS_SERVER: 172.28.77.12
+      DNS_METRICS_URL: http://coredns:9153/metrics
+      SMTP_HOST: mailpit
+      MAILPIT_API: http://mailpit:8025
+    volumes:
+      - monitor-data:/data
+      - nginx-logs:/var/log/nginx-json:ro
+      - ./services:/config:ro                       # para detectar alteracao de config (fase 2)
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # para ler CPU/memoria do container do Postgres
+    depends_on:
+      postgres: { condition: service_healthy }
+      nginx: { condition: service_started }
+      coredns: { condition: service_started }
+      mailpit: { condition: service_started }
+    networks:
+      lab: { ipv4_address: 172.28.77.20 }
+
+  loadgen:
+    build: ./loadgen
+    container_name: rd-loadgen
+    environment:
+      LOAD_MODE: ${LOAD_MODE:-normal}   # normal | pico | bruteforce
+      WEB_URL: http://nginx
+      PG_DSN: postgresql://app:app123@postgres:5432/appdb
+      DNS_SERVER: 172.28.77.12
+      SMTP_HOST: mailpit
+    depends_on:
+      postgres: { condition: service_healthy }
+      nginx: { condition: service_started }
+      coredns: { condition: service_started }
+      mailpit: { condition: service_started }
+    networks:
+      lab: { ipv4_address: 172.28.77.21 }

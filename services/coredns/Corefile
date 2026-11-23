@@ -1,0 +1,12 @@
+# CoreDNS autoritativo apenas para a zona lab.local (porta 53 dentro do container)
+lab.local:53 {
+    # Servimos a zona a partir de um arquivo de zona (registros A, CNAME...)
+    file /etc/coredns/lab.local.db
+
+    # Expoe metricas no formato Prometheus em http://coredns:9153/metrics
+    prometheus :9153
+
+    # Uma linha de log por consulta DNS recebida
+    log
+    errors
+}
