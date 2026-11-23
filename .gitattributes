@@ -1,0 +1,15 @@
+# Evita que o Git do Windows converta para CRLF (quebra scripts e configs dentro dos containers Linux)
+* text=auto eol=lf
+*.sh text eol=lf
+*.conf text eol=lf
+Corefile text eol=lf
+Dockerfile text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf
+*.env text eol=lf
+htpasswd text eol=lf
+*.db text eol=lf
+*.db-wal binary
+*.db-shm binary
