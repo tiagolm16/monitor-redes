@@ -2,15 +2,34 @@
 
 Trabalho final de Redes de Computadores (IDP). Monitora Web Server (nginx), Banco de Dados (PostgreSQL), DNS (CoreDNS) e SMTP (Mailpit), com API REST, dashboards, alertas e monitoramentos de segurança.
 
-Regras do projeto: [CLAUDE.md](CLAUDE.md). Explicação de cada fase: [docs/RELATORIO_PROCESSO.md](docs/RELATORIO_PROCESSO.md).
+![Visão geral do painel em operação normal](docs/img/fig01_visao_geral_normal.png)
 
-## Como rodar
+*Painel, Visão Geral, em operação normal. O card de Segurança fica amarelo porque as imagens públicas usadas têm CVEs CRITICAL conhecidos.*
 
-Requisitos: Windows 11 com Docker Desktop (WSL2).
+Para subir tudo (Windows 11 com Docker Desktop e WSL2):
 
 ```powershell
 docker compose up -d --build
 ```
+
+Depois abra o painel em http://localhost:8000 e o Mailpit (e-mails de alerta) em http://localhost:8025.
+
+## Índice da documentação
+
+| Documento | Para quê |
+|---|---|
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Instalar do zero no Windows (WSL2, Docker Desktop, Git), subir, Trivy, testes e solução de problemas |
+| [docs/ARQUITETURA.md](docs/ARQUITETURA.md) | Componentes, rede e portas, fluxo do dado, decisões e limitações (inclui o diagrama `docs/img/fig00_arquitetura.png`) |
+| [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | Como verificar, diagnosticar e recuperar cada serviço (web, banco, DNS, SMTP, monitor) |
+| [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md) | O que fazer em cada tipo de incidente (queda, latência, erros, DDoS, brute force, configuração, CVE) |
+| [docs/ROTEIRO_APRESENTACAO.md](docs/ROTEIRO_APRESENTACAO.md) | Roteiro de 10 a 12 minutos, demo ao vivo e plano B |
+| [docs/ROTEIRO_VIDEO.md](docs/ROTEIRO_VIDEO.md) | Roteiro do vídeo explicativo (5 a 8 minutos), cena por cena |
+| [docs/TESTES.md](docs/TESTES.md) | Casos de teste, resultados e evidências |
+| [docs/RELATORIO_PROCESSO.md](docs/RELATORIO_PROCESSO.md) | Relatório de cada fase: decisões, conceitos de redes, comandos, perguntas da banca e problemas |
+| [docs/img/LEGENDAS.md](docs/img/LEGENDAS.md) | Legendas das figuras do artigo |
+| [CLAUDE.md](CLAUDE.md) | Regras de trabalho do projeto |
+
+## Como rodar
 
 | O que | Endereço |
 |---|---|
@@ -73,6 +92,7 @@ Invoke-RestMethod -Method Post http://localhost:8090/mode/pico         # ou norm
 .\scripts\demo_bruteforce.ps1          # brute force por 60 s
 .\scripts\demo_config.ps1              # altera o nginx.conf, espera o alerta e desfaz
 .\scripts\demo_reset.ps1               # volta tudo ao normal
+.\scripts\preparar_apresentacao.ps1    # sobe tudo, espera ficar verde, limpa o histórico de alertas e abre o navegador
 ```
 
 Se o PowerShell bloquear a execução: `powershell -ExecutionPolicy Bypass -File .\scripts\demo_ddos.ps1`.
