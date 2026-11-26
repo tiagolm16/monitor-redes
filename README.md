@@ -14,6 +14,12 @@ docker compose up -d --build
 
 Depois abra o painel em http://localhost:8000 e o Mailpit (e-mails de alerta) em http://localhost:8025.
 
+## Arquitetura
+
+![Diagrama de arquitetura](docs/img/fig00_arquitetura.png)
+
+*Seis containers numa rede Docker própria: nginx, PostgreSQL, CoreDNS e Mailpit (monitorados), o monitor (coleta, alertas, API e painel) e o gerador de tráfego. Detalhes em [docs/ARQUITETURA.md](docs/ARQUITETURA.md).*
+
 ## Índice da documentação
 
 | Documento | Para quê |
