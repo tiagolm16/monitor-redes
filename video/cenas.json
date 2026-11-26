@@ -1,0 +1,34 @@
+{
+  "cena01": {
+    "titulo": "Abertura e arquitetura",
+    "segundos": 40.8
+  },
+  "cena02": {
+    "titulo": "Visão geral e páginas dos serviços",
+    "segundos": 45.2
+  },
+  "cena03": {
+    "titulo": "Queda do banco e e-mails",
+    "segundos": 36.4
+  },
+  "cena04": {
+    "titulo": "Página de Alertas",
+    "segundos": 29.2
+  },
+  "cena05": {
+    "titulo": "Segurança: tráfego anormal e tentativas de invasão",
+    "segundos": 45.6
+  },
+  "cena06": {
+    "titulo": "Segurança: configuração e vulnerabilidades",
+    "segundos": 34.8
+  },
+  "cena07": {
+    "titulo": "Celular e testes",
+    "segundos": 22.4
+  },
+  "cena08": {
+    "titulo": "Encerramento",
+    "segundos": 16.4
+  }
+}
