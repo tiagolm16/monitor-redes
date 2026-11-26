@@ -2,6 +2,8 @@
 
 Trabalho final de Redes de Computadores (IDP). Monitora Web Server (nginx), Banco de Dados (PostgreSQL), DNS (CoreDNS) e SMTP (Mailpit), com API REST, dashboards, alertas e monitoramentos de segurança.
 
+**Autores:** Tiago Lara Melo, Pedro Vilela, Diana Galdino e Lucas Barreto.
+
 ![Visão geral do painel em operação normal](docs/img/fig01_visao_geral_normal.png)
 
 *Painel, Visão Geral, em operação normal. O card de Segurança fica amarelo porque as imagens públicas usadas têm CVEs CRITICAL conhecidos.*
